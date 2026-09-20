@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <array>
 #include <imgui.h>
+#include <imgui_internal.h>
 #include <string_view>
 
 #include "../../../../resources/resource.h"
@@ -9,6 +10,7 @@
 #include "../components/logo/ui_logo_component.h"
 #include "../components/section/ui_section_component.h"
 #include "../modules/registry/ui_module_registry.h"
+#include "../runtime/ui_visibility_runtime.h"
 #include "../scaling/dpi/ui_dpi_scaling.h"
 #include "navigation/ui_layout_navigation.h"
 #include "ui_layout_lifecycle.h"
@@ -58,6 +60,8 @@ constexpr float kTitleTextRatio = 1.5F;
 constexpr float kHalfExtent = 2.0F;
 /** The surface names the tool with the same wordmark the HUD card carries. */
 constexpr char kTitle[] = "SUNRISE";
+/** The hidden close action label is scoped by the main window. */
+constexpr char kCloseWidgetId[] = "##close";
 
 /**
  * Copies one display name into null-terminated component storage.
@@ -119,8 +123,15 @@ void draw_companion_windows() noexcept {
     }
 }
 
-/** Draws the animated logo, then the name and version, on one title row. */
-void draw_title() noexcept {
+/**
+ * Draws the animated logo, then the name and version, on one title row, with a close action
+ * at its far end.
+ * @return True when the close action was pressed.
+ */
+[[nodiscard]] bool draw_title() noexcept {
+    // The row edges are taken before it opens, so the close action can sit at its far end.
+    const ImVec2 rowOrigin = ImGui::GetCursorScreenPos();
+    const float rowRight = rowOrigin.x + ImGui::GetContentRegionAvail().x;
     const float extent = scaling::dpi::pixels(kTitleLogoExtent);
     const bool logoDrawn = components::logo::draw(extent);
     if (logoDrawn) {
@@ -144,6 +155,16 @@ void draw_title() noexcept {
     ImGui::SetCursorPosY(
         titleY + ((std::max)(titleHeight - ImGui::GetTextLineHeight(), 0.0F) / kHalfExtent));
     ImGui::TextDisabled(SUNRISE_VER_STRING);
+
+    // The same Dear ImGui title-bar close button the Activity Host tool windows carry, at the
+    // right edge of the title row and centered on it. It takes no layout space, so the row
+    // and the separator below keep their places.
+    const float buttonExtent = ImGui::GetFontSize();
+    const float rowHeight = logoDrawn ? extent : titleHeight;
+    const ImVec2 buttonPosition{
+        rowRight - buttonExtent,
+        rowOrigin.y + ((std::max)(rowHeight - buttonExtent, 0.0F) / kHalfExtent)};
+    return ImGui::CloseButton(ImGui::GetID(kCloseWidgetId), buttonPosition);
 }
 
 } // namespace
@@ -186,7 +207,11 @@ bool render(bool visible) noexcept {
     ImGui::PushStyleVar(ImGuiStyleVar_Alpha, progress);
     const bool submitContents = ImGui::Begin("Sunrise", nullptr, kMainWindowFlags);
     if (submitContents) {
-        draw_title();
+        // The close action is one press of the configured toggle key, so both paths share the
+        // same visibility state. A surface already closing ignores it, or it would reopen.
+        if (draw_title() && visible) {
+            (void)runtime::toggle_for_key(runtime::snapshot().toggleVirtualKey);
+        }
         ImGui::Separator();
 
         const StateSnapshot state = snapshot();
