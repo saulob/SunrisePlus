@@ -223,33 +223,32 @@ bool draw(bool interfaceEnabled) noexcept {
     const float margin = scaling::dpi::pixels(kViewportMargin);
     const float gap = scaling::dpi::pixels(kOverlayGap);
     ImVec2 position{viewport->WorkPos.x + margin, viewport->WorkPos.y + margin};
-    // The startup hint sits beside the Sunrise card on its row, or on the corner while the card
-    // is off, so it never pushes the overlays stacked below down.
+    // The startup hint sits beside whichever overlay owns the top row, or on the corner when
+    // none does. It is drawn after the stack, once that row's width is known, and never moves
+    // the overlays stacked below.
     ImVec2 hintPosition = position;
     bool drawn = false;
     for (std::size_t index = 0; index < kOverlayCount; ++index) {
-        if (!g_enabled[index]) {
-            continue;
-        }
-        const auto overlay = static_cast<Overlay>(index);
-        if (overlay == Overlay::startupHint) {
-            const float progress = overlays::startup_hint::progress();
-            if (progress <= 0.0F) {
-                continue;
-            }
-            // One style alpha fades the hint and everything drawn inside it together.
-            ImGui::PushStyleVar(ImGuiStyleVar_Alpha, progress);
-            (void)draw_overlay(kOverlays[index], hintPosition);
-            ImGui::PopStyleVar();
-            drawn = true;
+        if (!g_enabled[index] || static_cast<Overlay>(index) == Overlay::startupHint) {
             continue;
         }
         const ImVec2 size = draw_overlay(kOverlays[index], position);
-        if (overlay == Overlay::logoCard) {
+        if (!drawn) {
             hintPosition.x += size.x + gap;
         }
         position.y += size.y + gap;
         drawn = true;
+    }
+    constexpr auto hintIndex = static_cast<std::size_t>(Overlay::startupHint);
+    if (g_enabled[hintIndex]) {
+        const float progress = overlays::startup_hint::progress();
+        if (progress > 0.0F) {
+            // One style alpha fades the hint and everything drawn inside it together.
+            ImGui::PushStyleVar(ImGuiStyleVar_Alpha, progress);
+            (void)draw_overlay(kOverlays[hintIndex], hintPosition);
+            ImGui::PopStyleVar();
+            drawn = true;
+        }
     }
     return drawn;
 }
