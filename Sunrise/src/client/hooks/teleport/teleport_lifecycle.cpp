@@ -105,7 +105,6 @@ std::int64_t __fastcall physics_sync(std::byte* component, std::byte* outFlags) 
     // is written and read inside this tick, so it has to run here and not on a frame poll.
     hooks::sword_skate::apply(component);
     hooks::fly::apply(component);
-    hooks::fly::apply_speed(component);
     // This tick is the only one that sees every component, so it is where the player's is found.
     client::player::position::observe(component);
     const PhysicsSync next = original<PhysicsSync>(kPhysicsSlot);

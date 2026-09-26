@@ -474,10 +474,11 @@ std::int32_t __fastcall havok_step(std::byte* simulation, float deltaTime) noexc
         apply_jump_height(localBody.component, before, movementSettings);
     }
     // Fly writes first, so the velocity read below is the one it asked for.
+    bool speedRaised = false;
     if (flying) {
         fly::before_step(before);
     } else if (speeding) {
-        fly::before_speed_step(before);
+        speedRaised = fly::before_speed_step(before);
     }
     const bool hasBody = before != nullptr;
     if (hasBody) {
@@ -537,7 +538,7 @@ std::int32_t __fastcall havok_step(std::byte* simulation, float deltaTime) noexc
         field<std::array<float, kVectorLanes>>(body, kBodyVelocity) =
             capped_speed(moved, fly::kPublishedSpeedCap);
     }
-    // Movement speed is shown the same cap, on the horizontal lanes it drives.
+    // Movement speed puts the game's own horizontal lanes back, so its speed lasts one step.
     if (speeding && sameBody) {
         fly::after_speed_step(body);
     }
@@ -567,8 +568,8 @@ std::int32_t __fastcall havok_step(std::byte* simulation, float deltaTime) noexc
 
     // Collision may consume velocity before publication. Restore it so the next step still moves.
     // The vertical lane stays resolved. A rested body already had every lane put back above, and
-    // movement speed writes its lanes again before the next step, so its capped speed stands.
-    if (!rested && !speeding) {
+    // a step movement speed raised already had the game's own horizontal lanes put back.
+    if (!rested && !speedRaised) {
         std::array<float, kVectorLanes> wakeVelocity =
             field<std::array<float, kVectorLanes>>(body, kBodyVelocity);
         wakeVelocity[kHorizontalX] = nativeVelocity[kHorizontalX];

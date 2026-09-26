@@ -6,7 +6,8 @@
  * Movement speed reuses the same keys and direction with fly off, adds the controller's left
  * stick through the move vector the game derives after its controller backends (no device is
  * polled here), and writes only the horizontal lanes at the configured speed, leaving the
- * vertical lane to the game.
+ * vertical lane to the game. It only raises a horizontal move the game is already making, and
+ * only for one step: the game's own lanes go back after it.
  */
 
 #include "fly.h"
@@ -68,6 +69,11 @@ constexpr std::size_t kContextMoveOffset = 0x1980;
 constexpr std::size_t kLocalPlayer = 0;
 /** Above this squared length a travel vector is brought back to unit length. */
 constexpr float kMaximumLengthSquared = 1.0F;
+/**
+ * Native horizontal speed, squared, at or below which the game has the player standing. Only
+ * numerical noise sits under it; noclip treats a body below the same bar as stationary.
+ */
+constexpr float kNativeStationarySquared = 0.000001F;
 
 /** The left stick as the game finalised it: forward and left, each in [-1, 1]. */
 struct StickMove {
@@ -121,6 +127,29 @@ bool g_steered{false};
 std::atomic_bool g_speedToggleDown{false};
 /** The player input context array, or null while the stick has no source. */
 std::atomic<std::byte*> g_playerContexts{nullptr};
+
+/**
+ * The game's own horizontal lanes, taken before movement speed replaced them for one step, and the
+ * body they belong to. Put back after that step, so the raised speed never outlives it.
+ */
+struct NativeHorizontal {
+    void* body{};
+    float x{};
+    float y{};
+};
+/** Filled only while a step carries movement speed's lanes. A null body: nothing to restore. */
+NativeHorizontal g_speedNative{};
+
+/** DEBUG_SAULO: what a step did with movement speed. Logged on change only. */
+enum class DebugSpeedGate : std::uint8_t {
+    none,
+    idle,
+    blocked,
+    applied,
+};
+DebugSpeedGate g_debugSpeedGate{DebugSpeedGate::none};
+/** DEBUG_SAULO: set after a restore was skipped, so a run of them logs once. */
+bool g_debugRestoreSkipped{false};
 
 /**
  * Takes the account's movement bindings once they are loaded.
@@ -330,6 +359,43 @@ void write_horizontal_velocity(void* body, const teleport::Vector& velocity) noe
 }
 
 /**
+ * DEBUG_SAULO: logs what a movement speed step did, only when it differs from the last step.
+ * @param gate What the step did.
+ * @param nativeSquared The game's horizontal speed at step entry, squared.
+ * @param desiredSquared The horizontal speed the keys and stick asked for, squared.
+ */
+void debug_speed_gate(DebugSpeedGate gate, float nativeSquared, float desiredSquared) noexcept {
+    if (gate == g_debugSpeedGate) {
+        return;
+    }
+    g_debugSpeedGate = gate;
+    const char* const name = gate == DebugSpeedGate::applied   ? "applied"
+                             : gate == DebugSpeedGate::blocked ? "blocked"
+                                                               : "idle";
+    core::log::writef(core::log::Channel::client,
+                      core::log::Level::info,
+                      "DEBUG_SAULO ev=movement_speed stage=gate state=%s native=%.4f desired=%.4f",
+                      name,
+                      static_cast<double>(std::sqrt(nativeSquared)),
+                      static_cast<double>(std::sqrt(desiredSquared)));
+}
+
+/**
+ * DEBUG_SAULO: logs a skipped restore once per run of them.
+ * @param reason Why the game's lanes were not put back.
+ */
+void debug_restore_skipped(const char* reason) noexcept {
+    if (g_debugRestoreSkipped) {
+        return;
+    }
+    g_debugRestoreSkipped = true;
+    core::log::writef(core::log::Channel::client,
+                      core::log::Level::info,
+                      "DEBUG_SAULO ev=movement_speed stage=restore result=skipped reason=%s",
+                      reason);
+}
+
+/**
  * Reads the movement speed toggle key once a frame and flips its switch on the press. The same
  * shape as the fly poll below, kept apart so fly's own path stays as it was.
  */
@@ -484,55 +550,67 @@ bool speed_enabled() noexcept {
     return settings.movementSpeedEnabled && !settings.flyEnabled;
 }
 
-/** Sets the horizontal velocity the coming simulation step integrates. */
-void before_speed_step(void* body) noexcept {
-    if (body == nullptr || !read_bindings()) {
-        return;
+/** Replaces the horizontal lanes for the coming step while the game moves the player itself. */
+bool before_speed_step(void* body) noexcept {
+    // A step whose body was replaced never reached its restore; those lanes belonged to that body.
+    if (g_speedNative.body != nullptr) {
+        debug_restore_skipped("unreached");
     }
-    // Set, not scaled: the lanes hold whatever the keys and the stick ask for this step, and
-    // nothing when they ask for nothing, so no speed carries over from one step to the next.
-    write_horizontal_velocity(body,
-                              desired_velocity(client::movement::get().movementSpeed, true));
+    g_speedNative = NativeHorizontal{};
+    if (body == nullptr || !read_bindings()) {
+        return false;
+    }
+    const teleport::Vector desired = desired_velocity(client::movement::get().movementSpeed, true);
+    noclip::Vector native{};
+    noclip::read_body_velocity(body, native);
+    const float desiredSquared =
+        desired[kLaneX] * desired[kLaneX] + desired[kLaneY] * desired[kLaneY];
+    const float nativeSquared = native[kLaneX] * native[kLaneX] + native[kLaneY] * native[kLaneY];
+    // Without a move asked for, the game's lanes stay as they are: knockback, pushes and its own
+    // stop all come through.
+    if (desiredSquared <= kMinimumLengthSquared) {
+        debug_speed_gate(DebugSpeedGate::idle, nativeSquared, desiredSquared);
+        return false;
+    }
+    // The keys and the stick are read raw. The game decides whether they move the player, and an
+    // interface that took them leaves its lanes at rest, so the raised speed follows that decision.
+    if (nativeSquared <= kNativeStationarySquared) {
+        debug_speed_gate(DebugSpeedGate::blocked, nativeSquared, desiredSquared);
+        return false;
+    }
+    g_speedNative = NativeHorizontal{body, native[kLaneX], native[kLaneY]};
+    write_horizontal_velocity(body, desired);
+    debug_speed_gate(DebugSpeedGate::applied, nativeSquared, desiredSquared);
+    return true;
 }
 
-/** Caps the horizontal speed the game is shown after the step. */
+/** Puts the game's own horizontal lanes back after a step movement speed raised. */
 void after_speed_step(void* body) noexcept {
-    if (body == nullptr) {
+    const NativeHorizontal native = g_speedNative;
+    g_speedNative = NativeHorizontal{};
+    if (native.body == nullptr) {
         return;
     }
-    // The same field and cap as fly, on the two lanes this feature owns. The vertical lane is
-    // the game's, so a fall keeps the speed it had.
-    noclip::Vector stored{};
-    noclip::read_body_velocity(body, stored);
-    teleport::Vector horizontal{stored[kLaneX], stored[kLaneY], 0.0F};
-    cap_speed(horizontal, kPublishedSpeedCap);
-    write_horizontal_velocity(body, horizontal);
+    if (native.body != body) {
+        debug_restore_skipped("body");
+        return;
+    }
+    // The step has already moved the player at the raised speed. The body leaves it with the
+    // game's own lanes, so the next tick starts from what the game made, and the test above reads
+    // the game alone. The vertical lane is the step's result and stays as it is.
+    write_horizontal_velocity(body, teleport::Vector{native.x, native.y, 0.0F});
+    g_debugRestoreSkipped = false;
 }
 
-/** Writes the capped horizontal velocity on the physics sync, which publishes it. */
-void apply_speed(void* component) noexcept {
-    if (!speed_enabled()) {
-        return;
-    }
-    if (component == nullptr || !teleport::owns_local_player(component)) {
-        return;
-    }
-    void* const body = teleport::body(component);
-    if (body == nullptr || !read_bindings()) {
-        return;
-    }
-    teleport::Vector velocity = desired_velocity(client::movement::get().movementSpeed, true);
-    // Only the horizontal lanes are written, so only they are measured against the cap.
-    velocity[teleport::kVerticalLane] = 0.0F;
-    cap_speed(velocity, kPublishedSpeedCap);
-    write_horizontal_velocity(body, velocity);
-}
-
-/** Clears the key state and the held height. The switches are stored settings and survive. */
+/** Clears the key state, the held height and the held lanes. The switches are stored settings. */
 void reset() noexcept {
     g_toggleDown.store(false, std::memory_order_release);
     g_speedToggleDown.store(false, std::memory_order_release);
     g_heightValid = false;
+    g_speedNative = NativeHorizontal{};
+    // DEBUG_SAULO: the next session logs its first state again.
+    g_debugSpeedGate = DebugSpeedGate::none;
+    g_debugRestoreSkipped = false;
 }
 
 } // namespace sunrise::client::hooks::fly
