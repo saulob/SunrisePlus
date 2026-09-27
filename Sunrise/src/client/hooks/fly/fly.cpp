@@ -1,14 +1,13 @@
 /**
- * Velocity fly. The movement keys set the player's velocity every tick.
+ * Velocity fly. The movement keys and the left stick set the player's velocity every tick.
  * Velocity is set, not added. Adding compounds each tick and leaves gravity in the vertical lane.
  * Setting it means releasing every key stops the player, which is what holds a hover.
  * The write goes in before the simulation step, and again before the sync that publishes it.
  * Movement speed reuses the same keys and direction with fly off, adds the controller's left
  * stick through the move vector the game derives after its controller backends (no device is
  * polled here), and writes only the horizontal lanes at the configured speed, leaving the
- * vertical lane to the game. The stick is movement speed's alone; fly flies from the keys.
- * Movement speed only raises a horizontal move the game is already making for one step;
- * the game's own lanes go back afterward.
+ * vertical lane to the game. It only raises a horizontal move the game is already making, and
+ * only for one step: the game's own lanes go back after it.
  */
 
 #include "fly.h"
@@ -226,7 +225,7 @@ NativeHorizontal g_speedNative{};
 
 /**
  * Composes the pressed directions and, when requested, the stick into one vector of at most unit
- * length. With a zero stick this is the unit vector of the keys alone, which is what fly asks for.
+ * length. With a zero stick this is the unit vector of the keys alone.
  * @param pressed One flag per direction.
  * @param stick The left stick, forward and left.
  * @param forward Camera forward vector.
@@ -323,8 +322,7 @@ void write_horizontal_velocity(void* body, const teleport::Vector& velocity) noe
  * Works out the velocity the keys and, optionally, the stick ask for. Also records whether a
  * press owns the vertical lane.
  * @param speed Configured speed.
- * @param withStick True to add the controller's left stick. Fly passes false and flies from the
- * keys alone; the stick is movement speed's.
+ * @param withStick True to add the controller's left stick. Fly and movement speed both add it.
  * @return Velocity in world units per second.
  */
 [[nodiscard]] teleport::Vector desired_velocity(float speed, bool withStick) noexcept {
@@ -458,7 +456,7 @@ void apply(void* component) noexcept {
     }
     // Capped, because this is the field the game reads to decide the player hit something too
     // hard. The step has the real speed; this is only what the sync publishes.
-    teleport::Vector velocity = desired_velocity(settings.flySpeed, false);
+    teleport::Vector velocity = desired_velocity(settings.flySpeed, true);
     cap_speed(velocity, kPublishedSpeedCap);
     (void)teleport::write_velocity(component, velocity);
 }
@@ -474,7 +472,7 @@ void before_step(void* body) noexcept {
     if (body == nullptr || !read_bindings()) {
         return;
     }
-    noclip::write_body_velocity(body, desired_velocity(client::movement::get().flySpeed, false));
+    noclip::write_body_velocity(body, desired_velocity(client::movement::get().flySpeed, true));
     noclip::Vector position{};
     noclip::read_body_position(body, position);
     g_heightBeforeStep = position[teleport::kVerticalLane];

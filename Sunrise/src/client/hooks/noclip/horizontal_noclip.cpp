@@ -351,7 +351,7 @@ void apply_jump_height(std::byte* component,
         bounded_multiplier(settings.jumpHeightMultiplier,
                            client::movement::kMinimumJumpHeightMultiplier,
                            client::movement::kMaximumJumpHeightMultiplier,
-                           client::movement::kDefaultJumpHeightMultiplier);
+                           client::movement::kSafeJumpHeightMultiplier);
     if (primaryClassified) {
         g_jumpHeight.phase = PrimaryJumpPhase::consumed;
         if (jumpHeight != 1.0F) {

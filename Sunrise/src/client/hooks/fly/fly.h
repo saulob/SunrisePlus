@@ -10,8 +10,8 @@ inline constexpr float kPublishedSpeedCap = 8.0F;
 
 /**
  * Finds the game's processed left-stick move vector, which is read every tick alongside the keys.
- * A miss is logged and leaves the stick contribution at zero. Movement speed uses the stick;
- * fly continues to fly from the keys alone.
+ * A miss is logged and leaves the stick contribution at zero; fly and movement speed still move
+ * from the keys.
  */
 void resolve_controller() noexcept;
 
@@ -44,10 +44,10 @@ void before_step(void* body) noexcept;
 void after_step(void* body, bool heldElsewhere) noexcept;
 
 /**
- * Movement speed: the same keys and camera-relative direction as fly, plus the controller's left
- * stick, at a configured speed, on the horizontal lanes only. The vertical lane stays the game's,
- * so gravity, jumping and falling are untouched. It only raises horizontal movement the game
- * is already making, and only for the step it is integrated in.
+ * Movement speed: the same keys, left stick and camera-relative direction as fly, at a configured
+ * speed, on the horizontal lanes only. The vertical lane stays the game's,
+ * so gravity, jumping and falling are untouched. It only raises a horizontal move the game is
+ * already making, and only for the step it is integrated in.
  * @return True while movement speed may drive the horizontal lanes: on, with fly off. Noclip may
  * be on; it then carries this speed through geometry.
  */

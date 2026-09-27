@@ -10,6 +10,14 @@ struct Settings {
     bool antiAfkEnabled{false};
     /** Drops damage transactions aimed at the local player. */
     bool noDamageEnabled{false};
+    /** Keeps grenade ability energy full through the game's own energy adjustment. */
+    bool grenadeNoCooldownEnabled{false};
+    /** Keeps charged melee ability energy full through the game's own energy adjustment. */
+    bool meleeNoCooldownEnabled{false};
+    /** Keeps class ability energy full through the game's own energy adjustment. */
+    bool classAbilityNoCooldownEnabled{false};
+    /** Refills super ability energy after each use ends, through the game's own adjustment. */
+    bool superNoCooldownEnabled{false};
 };
 
 /**

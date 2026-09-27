@@ -12,15 +12,25 @@ Destiny 2 Offline Exploration Mod based on [Sunrise](https://github.com/stanuwu/
 - [Documentation](https://projectsunrise.dev/docs/)
 - [Discord](https://discord.gg/22JS6et5k9)
 
+## Opening the overlay
+
+After launching Destiny 2, press Insert to open or close the Sunrise overlay
+
+Insert is the default key and can be changed in `bin\x64\Sunrise\settings.json`
+
+See the [FAQ](https://projectsunrise.dev/faq/) for more information
+
 ## SunrisePlus Features
 
 Additional features implemented for SunrisePlus
 
 - [x] Infinite Magazine
+- [x] No Damage
 - [x] Configurable Jump Height from 1x to 10x
 - [x] Controller Support for Fly Movement
-- [x] No Damage
 - [x] Configurable Movement Speed
+- [x] Ability No Cooldown for Grenade, Super, Melee and Class Ability
+- [x] Season Progression controls for XP, ranks, Artifact Power Bonus and reset
 
 These features are optional and are designed for offline gameplay and exploration
 
@@ -37,11 +47,9 @@ Some features from the original Sunrise project are still under development, inc
 
 ## About SunrisePlus
 
-SunrisePlus is an independent extension of the original Sunrise project
+SunrisePlus is my personal extended fork of Sunrise, focused on gameplay options, quality-of-life improvements and experimentation with the preserved Destiny 2 build
 
-Features developed for SunrisePlus are not necessarily part of the official Sunrise roadmap and may remain exclusive to SunrisePlus
-
-SunrisePlus will continue to follow the original Sunrise project so that future improvements and fixes can be integrated over time
+It builds on the excellent preservation work of the original Sunrise project while allowing me to continue developing and testing features independently
 
 ## Future Ideas
 
@@ -49,10 +57,8 @@ Some features being considered or researched for SunrisePlus
 
 - Disable Fall Damage
 - Instant Summon Vehicle / Sparrow
-- Ability Recharge / No Cooldown
 - Damage Modifier
 - Cinematics Library
-- Instant Super
 
 These are ideas rather than commitments and may change as the project evolves
 

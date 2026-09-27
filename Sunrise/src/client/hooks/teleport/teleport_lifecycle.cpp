@@ -14,6 +14,7 @@
 #include "../../../core/logging/log.h"
 #include "../../hooking/detour.h"
 #include "../../player/player_position.h"
+#include "../ability_no_cooldown/ability_no_cooldown.h"
 #include "../bootflow/bootflow_hook_lifecycle.h"
 #include "../fly/fly.h"
 #include "../polled_input/runtime.h"
@@ -86,6 +87,8 @@ std::int64_t __fastcall camera_transform(std::uint32_t playerIndex) noexcept {
     client::player::position::poll();
     hooks::bootflow::poll_world_step();
     hooks::bootflow::poll_current_slice_set();
+    // Shares this per-frame tick for the ability energy options.
+    hooks::ability_no_cooldown::poll();
     return result;
 }
 
@@ -178,8 +181,8 @@ bool install() noexcept {
     if (!resolve_action_keys()) {
         (void)fail("action_keys");
     }
-    // Movement speed reads the stick on the ticks these hooks carry. Without it, movement still
-    // works from the keys, and fly continues to fly from the keys alone.
+    // Fly and movement speed read the stick on the ticks these hooks carry. Without it, both still
+    // move from the keys.
     hooks::fly::resolve_controller();
     g_installed.store(true, std::memory_order_release);
     core::log::write(

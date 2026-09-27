@@ -195,7 +195,7 @@ void draw() noexcept {
     ImGui::Spacing();
     ImGui::TextUnformatted("Fly");
     ImGui::Separator();
-    ImGui::TextWrapped("Fly with your movement keys.");
+    ImGui::TextWrapped("Fly using your movement controls.");
     ImGui::Spacing();
 
     changed = core::ui::components::toggle::control("Enabled##fly", settings.flyEnabled) || changed;
@@ -226,9 +226,20 @@ void draw() noexcept {
 
     ImGui::Spacing();
     ImGui::Spacing();
+    ImGui::TextUnformatted("Sword Skate Fix");
+    ImGui::Separator();
+    ImGui::TextWrapped("Disable sword swings blocking ability usage.");
+    ImGui::Spacing();
+
+    changed =
+        core::ui::components::toggle::control("Enabled##sword_skate", settings.swordSkateEnabled)
+        || changed;
+
+    ImGui::Spacing();
+    ImGui::Spacing();
     ImGui::TextUnformatted("Movement Speed");
     ImGui::Separator();
-    ImGui::TextWrapped("Move faster using normal movement controls.");
+    ImGui::TextWrapped("Adjust player movement speed.");
     ImGui::Spacing();
 
     changed = core::ui::components::toggle::control("Enabled##movement_speed",
@@ -264,20 +275,9 @@ void draw() noexcept {
 
     ImGui::Spacing();
     ImGui::Spacing();
-    ImGui::TextUnformatted("Sword Skate Fix");
-    ImGui::Separator();
-    ImGui::TextWrapped("Disable sword swings blocking ability usage.");
-    ImGui::Spacing();
-
-    changed =
-        core::ui::components::toggle::control("Enabled##sword_skate", settings.swordSkateEnabled)
-        || changed;
-
-    ImGui::Spacing();
-    ImGui::Spacing();
     ImGui::TextUnformatted("Jump Height");
     ImGui::Separator();
-    ImGui::TextWrapped("Increase player jump height");
+    ImGui::TextWrapped("Adjust player jump height.");
     ImGui::Spacing();
 
     changed = core::ui::components::toggle::control("Enabled##jump_height",

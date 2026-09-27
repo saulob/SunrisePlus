@@ -3,11 +3,13 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <variant>
 
 #include "../build_data/items/quest_initialization.h"
 #include "../build_data/records/definition.h"
+#include "../build_data/vendors/definition.h"
 #include "state.h"
 
 namespace sunrise::state::account::settings {
@@ -520,14 +522,18 @@ set_selected_title(std::uint16_t recordIndex, std::uint64_t& characterSoid, bool
  * Native-default sockets, a unique runtime SOID, and the selected character's current item level
  * are used. Full loadout resolution is the authoritative bucket-capacity check.
  *
- * @param collectibleIndex Collections row the Client pulled from.
+ * @param collectibleIndex Collections row that owns the item, or kNoCollectibleIndex.
  * @param definitionHash Installed item definition requested by the Client.
+ * @param price A vendor sale row's cost entries, spent in place of the collectible's material
+ *        set; absent for a Collections pull, which pays with the collectible's materials.
  * @param mutation Gets a checked after-image without changing account State.
  * @return True when the item and every existing loadout row resolve with one free native row.
  */
-[[nodiscard]] bool prepare_item_acquisition(std::uint16_t collectibleIndex,
-                                            std::uint32_t definitionHash,
-                                            PendingItemAcquisition& mutation) noexcept;
+[[nodiscard]] bool
+prepare_item_acquisition(std::uint16_t collectibleIndex,
+                         std::uint32_t definitionHash,
+                         std::optional<std::span<const build_data::vendors::SaleCost>> price,
+                         PendingItemAcquisition& mutation) noexcept;
 
 /** Prepares a direct character-item grant without a Collections charge. */
 [[nodiscard]] bool prepare_item_acquisition_for_item(std::uint16_t itemDefinitionIndex,
@@ -591,15 +597,18 @@ reserve_selected_character_inventory_serial(std::int32_t& mutationSerial) noexce
  * An existing non-full stack is incremented. Otherwise a new dense State entry is appended only
  * when the installed profile bucket still owns a free native row.
  *
- * @param collectibleIndex Collections row the Client pulled from.
+ * @param collectibleIndex Collections row that owns the item, or kNoCollectibleIndex.
  * @param definitionHash Installed stackable definition requested by the Client.
+ * @param price A vendor sale row's cost entries, spent in place of the collectible's material
+ *        set; absent for a Collections pull, which pays with the collectible's materials.
  * @param mutation Gets the checked profile before/after images without changing account State.
  * @return True when the definition belongs to the main profile array and one unit fits.
  */
-[[nodiscard]] bool
-prepare_profile_item_acquisition(std::uint16_t collectibleIndex,
-                                 std::uint32_t definitionHash,
-                                 PendingProfileItemAcquisition& mutation) noexcept;
+[[nodiscard]] bool prepare_profile_item_acquisition(
+    std::uint16_t collectibleIndex,
+    std::uint32_t definitionHash,
+    std::optional<std::span<const build_data::vendors::SaleCost>> price,
+    PendingProfileItemAcquisition& mutation) noexcept;
 
 /** Prepares a direct profile-stack grant without a Collections charge. */
 [[nodiscard]] bool
@@ -775,6 +784,27 @@ inline constexpr std::uint16_t kArtifactUnlockProgressionIndex = 39;
  * @return False when the amount is not positive or the total would overflow.
  */
 [[nodiscard]] bool grant_seasonal_experience(std::int32_t amount) noexcept;
+
+/**
+ * Replaces seasonal XP with zero and republishes every value derived from it, atomically.
+ * Artifact ownership, Season pass claims and record flags are left as they are.
+ * @return False when any write fails; nothing is kept then.
+ */
+[[nodiscard]] bool reset_seasonal_experience() noexcept;
+
+/**
+ * XP that moves the published total whole ranks forward, keeping its progress inside the rank.
+ * @param ranks Ranks to advance.
+ * @return XP to grant, stopping at the rank-100 threshold; zero once the pass is complete.
+ */
+[[nodiscard]] std::int32_t seasonal_experience_to_advance(std::uint16_t ranks) noexcept;
+
+/**
+ * Part of an XP amount the Season pass still has room for below its rank-100 threshold.
+ * @param amount XP the caller wants to grant.
+ * @return XP to grant; zero for a non-positive amount or once the pass is complete.
+ */
+[[nodiscard]] std::int32_t seasonal_experience_within_pass(std::int32_t amount) noexcept;
 
 /** @param rewardIndex Native reward-array index. @return True when the row is claimed. */
 [[nodiscard]] bool season_pass_reward_claimed(std::uint16_t rewardIndex) noexcept;

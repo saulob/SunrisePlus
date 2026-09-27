@@ -26,8 +26,10 @@ inline constexpr float kDefaultMovementSpeed = 15.0F;
 inline constexpr float kMinimumMovementSpeed = 1.0F;
 /** Fastest offered movement speed. The same ceiling as fly, for the same streaming reason. */
 inline constexpr float kMaximumMovementSpeed = 100.0F;
-/** Default multiplier for the initial jump impulse. */
-inline constexpr float kDefaultJumpHeightMultiplier = 1.0F;
+/** Default jump height multiplier for new settings. */
+inline constexpr float kDefaultJumpHeightMultiplier = 2.0F;
+/** Multiplier used in place of a non-finite value. It leaves the native jump unchanged. */
+inline constexpr float kSafeJumpHeightMultiplier = 1.0F;
 /** Smallest jump height multiplier offered by the interface. */
 inline constexpr float kMinimumJumpHeightMultiplier = 1.0F;
 /** Largest jump height multiplier offered by the interface. */

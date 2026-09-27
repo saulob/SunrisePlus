@@ -15,6 +15,7 @@
 #include "../content/bootstrap/bootstrap_token_publish.h"
 #include "../content/investment/worker.h"
 #include "../executable/image.h"
+#include "../hooks/ability_no_cooldown/ability_no_cooldown.h"
 #include "../hooks/assert_handler/assert_handler_lifecycle.h"
 #include "../hooks/async_io/async_io_lifetime_guard.h"
 #include "../hooks/bootflow/bootflow_hook_lifecycle.h"
@@ -194,6 +195,8 @@ void clear_game_targets() noexcept {
     (void)hooks::infinite_ammo::install();
     // Same: attached now so the Player control only has to flip the setting.
     (void)hooks::no_damage::install();
+    // Attaches whether or not the feature is on; the getter observer only records an owner.
+    (void)hooks::ability_no_cooldown::install();
     // Resolves the activity config getter here; the hold itself runs on the frame tick.
     (void)hooks::inactivity::install();
     // Read-only. While the prologue-filler boot task runs, it logs once per second which

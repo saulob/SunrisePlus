@@ -185,7 +185,7 @@ void parse(std::string_view text, Settings& output) noexcept {
         output.jumpHeightMultiplier = multiplier(std::strtof(buffer.data(), nullptr),
                                                  kMinimumJumpHeightMultiplier,
                                                  kMaximumJumpHeightMultiplier,
-                                                 kDefaultJumpHeightMultiplier);
+                                                 kSafeJumpHeightMultiplier);
     }
 }
 
