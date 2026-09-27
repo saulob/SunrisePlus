@@ -8,7 +8,6 @@
 #include <string_view>
 
 #include "../../../settings/parser.h"
-#include "../../animation/transition/ui_transition_animation.h"
 #include "../../runtime/ui_visibility_runtime.h"
 
 namespace sunrise::core::ui::hud::overlays::startup_hint {
@@ -18,12 +17,12 @@ namespace {
 constexpr float kDelaySeconds = 2.0F;
 /** 30 seconds is long enough to notice the hint and short enough to clear itself. */
 constexpr float kVisibleSeconds = 30.0F;
-/** Fixed animation key. Every visibility-lane user needs its own, so keep these distinct. */
-constexpr ImGuiID kOverlayAnimationId = 4;
-/** Response rates for fading in and out, slower than the menus so the hint stays subtle. */
-constexpr animation::transition::Rates kVisibilityRates{8.0F, 6.0F};
-/** A hidden hint has finished its transition and draws nothing. */
-constexpr float kHiddenProgress = 0.0F;
+/** Half a second to fade in or out, slower than the menus so the hint stays subtle. */
+constexpr float kFadeSeconds = 0.5F;
+/** A hidden hint has finished fading out and draws nothing. */
+constexpr float kHiddenOpacity = 0.0F;
+/** A shown hint has finished fading in. */
+constexpr float kShownOpacity = 1.0F;
 /** Longest supported toggle key name, plus the null. */
 constexpr std::size_t kKeyNameCapacity = 16;
 
@@ -31,6 +30,8 @@ constexpr std::size_t kKeyNameCapacity = 16;
 float g_elapsedSeconds = 0.0F;
 /** Set once the surface opened or the stay ran out. The hint never returns in this run. */
 bool g_dismissed = false;
+/** The hint's own fade, so it needs no shared animation key. */
+float g_opacity = kHiddenOpacity;
 
 /**
  * Names the configured toggle key in upper case, so it stands out from the muted text around it.
@@ -52,19 +53,19 @@ bool g_dismissed = false;
 
 /** Advances the hint's one-time lifetime by this frame. */
 float progress() noexcept {
+    const float deltaSeconds = ImGui::GetIO().DeltaTime;
     if (!g_dismissed) {
-        g_elapsedSeconds += ImGui::GetIO().DeltaTime;
+        g_elapsedSeconds += deltaSeconds;
         // An open surface has taught the key, and a hint that came back later would nag.
         if (runtime::snapshot().visible || g_elapsedSeconds >= kDelaySeconds + kVisibleSeconds) {
             g_dismissed = true;
         }
     }
     const bool shown = !g_dismissed && g_elapsedSeconds >= kDelaySeconds;
-    return animation::transition::update(kOverlayAnimationId,
-                                         animation::transition::Lane::visibility,
-                                         shown,
-                                         kVisibilityRates,
-                                         kHiddenProgress);
+    const float step = deltaSeconds / kFadeSeconds;
+    g_opacity = shown ? (std::min)(g_opacity + step, kShownOpacity)
+                      : (std::max)(g_opacity - step, kHiddenOpacity);
+    return g_opacity;
 }
 
 /** Draws the startup hint inside the overlay window the stack has already started. */

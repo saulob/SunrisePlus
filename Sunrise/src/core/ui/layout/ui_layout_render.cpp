@@ -1,7 +1,6 @@
 #include <algorithm>
 #include <array>
 #include <imgui.h>
-#include <imgui_internal.h>
 #include <string_view>
 
 #include "../../../../resources/resource.h"
@@ -62,6 +61,10 @@ constexpr float kHalfExtent = 2.0F;
 constexpr char kTitle[] = "SUNRISE";
 /** The hidden close action label is scoped by the main window. */
 constexpr char kCloseWidgetId[] = "##close";
+/** The close cross spans this fraction of its button, so it reads as a glyph and not a frame. */
+constexpr float kCloseCrossRatio = 0.5F;
+/** One pixel keeps the close cross as thin as the body text. */
+constexpr float kCloseCrossThickness = 1.0F;
 
 /**
  * Copies one display name into null-terminated component storage.
@@ -156,15 +159,30 @@ void draw_companion_windows() noexcept {
         titleY + ((std::max)(titleHeight - ImGui::GetTextLineHeight(), 0.0F) / kHalfExtent));
     ImGui::TextDisabled(SUNRISE_VER_STRING);
 
-    // The same Dear ImGui title-bar close button the Activity Host tool windows carry, at the
-    // right edge of the title row and centered on it. It takes no layout space, so the row
-    // and the separator below keep their places.
+    // A cross at the right edge of the title row, centered on it. It stays on the row the logo
+    // opened, like the version, so the row and the separator below keep their places.
+    ImGui::SameLine();
     const float buttonExtent = ImGui::GetFontSize();
     const float rowHeight = logoDrawn ? extent : titleHeight;
     const ImVec2 buttonPosition{
         rowRight - buttonExtent,
         rowOrigin.y + ((std::max)(rowHeight - buttonExtent, 0.0F) / kHalfExtent)};
-    return ImGui::CloseButton(ImGui::GetID(kCloseWidgetId), buttonPosition);
+    ImGui::SetCursorScreenPos(buttonPosition);
+    const bool pressed = ImGui::InvisibleButton(kCloseWidgetId, {buttonExtent, buttonExtent});
+
+    // Muted like the version until hovered, then white like the title.
+    const ImU32 color =
+        ImGui::GetColorU32(ImGui::IsItemHovered() ? ImGuiCol_Text : ImGuiCol_TextDisabled);
+    const float half = buttonExtent * kCloseCrossRatio / kHalfExtent;
+    const ImVec2 center{buttonPosition.x + (buttonExtent / kHalfExtent),
+                        buttonPosition.y + (buttonExtent / kHalfExtent)};
+    ImDrawList* drawList = ImGui::GetWindowDrawList();
+    const float thickness = scaling::dpi::pixels(kCloseCrossThickness);
+    drawList->AddLine(
+        {center.x - half, center.y - half}, {center.x + half, center.y + half}, color, thickness);
+    drawList->AddLine(
+        {center.x + half, center.y - half}, {center.x - half, center.y + half}, color, thickness);
+    return pressed;
 }
 
 } // namespace
@@ -207,10 +225,9 @@ bool render(bool visible) noexcept {
     ImGui::PushStyleVar(ImGuiStyleVar_Alpha, progress);
     const bool submitContents = ImGui::Begin("Sunrise", nullptr, kMainWindowFlags);
     if (submitContents) {
-        // The close action is one press of the configured toggle key, so both paths share the
-        // same visibility state. A surface already closing ignores it, or it would reopen.
-        if (draw_title() && visible) {
-            (void)runtime::toggle_for_key(runtime::snapshot().toggleVirtualKey);
+        // The close action only ever hides, so a surface already closing stays closed.
+        if (draw_title()) {
+            runtime::hide();
         }
         ImGui::Separator();
 
