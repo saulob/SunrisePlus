@@ -46,31 +46,30 @@ void after_step(void* body, bool heldElsewhere) noexcept;
 /**
  * Movement speed: the same keys and camera-relative direction as fly, plus the controller's left
  * stick, at a configured speed, on the horizontal lanes only. The vertical lane stays the game's,
- * so gravity, jumping and falling are untouched.
- * @return True while movement speed drives the horizontal lanes: on, with fly off. Noclip may
+ * so gravity, jumping and falling are untouched. It only raises horizontal movement the game
+ * is already making, and only for the step it is integrated in.
+ * @return True while movement speed may drive the horizontal lanes: on, with fly off. Noclip may
  * be on; it then carries this speed through geometry.
  */
 [[nodiscard]] bool speed_enabled() noexcept;
 
 /**
- * Sets the horizontal velocity the coming simulation step integrates.
+ * Replaces the horizontal lanes for the coming simulation step with the configured speed, only
+ * while the keys or the stick ask for a move and the game is already moving the player
+ * horizontally. Otherwise the game's lanes are left as they are.
  * @param body Character rigid body. Live only inside the step hook.
+ * @return True when the lanes were replaced. The game's own are put back after the step.
  */
-void before_speed_step(void* body) noexcept;
+[[nodiscard]] bool before_speed_step(void* body) noexcept;
 
 /**
- * Caps the horizontal speed the game is shown after the step, as fly does for all three lanes.
+ * Puts back the game's own horizontal lanes after a step movement speed raised, so the raised
+ * speed never carries into the next tick. Does nothing after a step it left alone.
  * @param body Character rigid body. Live only inside the step hook.
  */
 void after_speed_step(void* body) noexcept;
 
-/**
- * Writes the capped horizontal velocity on the physics sync, which publishes it.
- * @param component Physics component being synced. Tested for player ownership here.
- */
-void apply_speed(void* component) noexcept;
-
-/** Clears the key state. The switches are stored settings and survive. */
+/** Clears the key state and the held lanes. The switches are stored settings and survive. */
 void reset() noexcept;
 
 } // namespace sunrise::client::hooks::fly
