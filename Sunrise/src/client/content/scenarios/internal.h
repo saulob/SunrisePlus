@@ -24,10 +24,24 @@ inline constexpr std::size_t kObjectMemoCapacity = 16'384;
 /** Memo value for an object that declares no roster slot type. */
 inline constexpr std::uint16_t kNotARosterGroup = 0xFFFF;
 
+/** DEBUG_SAULO: `city_tower_social_d2`, the only destination the Tower carrier trace names. */
+inline constexpr std::uint32_t kDebugSauloTowerScenarioTag = 0x80B4A0F4U;
+
+/** DEBUG_SAULO: how one object's roster resolution went, for the Tower carrier trace. */
+struct DebugCarrier {
+    const char* reason{"unread"};
+    std::uint16_t declared{};
+    std::uint16_t descriptors{};
+    bool admitted{};
+};
+
 /** One memo row: a placed-object tag and the roster group it produced. */
 struct ObjectMemo {
     std::uint32_t tag{};
     std::uint16_t group{kNotARosterGroup};
+    /** Key the object declares, so a sighting that is not a group can still count its key. */
+    std::uint32_t registryKey{};
+    DebugCarrier debug{};
 };
 
 /** One slot, as its own descriptor declares it. */
@@ -274,6 +288,14 @@ void publish_groups(Walk& walk, layouts::Definition& row) noexcept;
                                   std::uint32_t objectTag,
                                   std::uint32_t sliceSetIndex,
                                   std::uint16_t& group) noexcept;
+
+/**
+ * @param storage Working storage for this pass.
+ * @param objectTag Tag from an object registry.
+ * @return The object's memo row once it has been resolved, or null.
+ */
+[[nodiscard]] const ObjectMemo* memo_of(const RosterStorage& storage,
+                                        std::uint32_t objectTag) noexcept;
 
 /**
  * Walks the next batch of destination rows for their roster groups.

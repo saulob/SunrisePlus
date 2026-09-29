@@ -468,6 +468,32 @@ bool read_datum_identity(std::uint32_t handle, DatumIdentity& output) noexcept {
         std::span(reinterpret_cast<std::byte*>(&output), wanted));
 }
 
+/** Tears one live object down through the native logical destroy, releasing its entity. */
+bool logical_destroy_object(std::uint32_t handle) noexcept {
+    if (live_datum(handle) == nullptr
+        || g_logicalDestroyOriginal.load(std::memory_order_acquire) == nullptr) {
+        return false;
+    }
+    (void)logical_destroy(handle);
+    return true;
+}
+
+/** Resolves a handle to its datum only while the datum still names that handle. */
+std::byte* live_datum(std::uint32_t handle) noexcept {
+    DatumIdentity identity{};
+    if (handle == kNone || !read_datum_identity(handle, identity)
+        || identity.selfHandle != handle) {
+        return nullptr;
+    }
+    std::uintptr_t base = 0;
+    std::uint32_t stride = 0;
+    if (!read_value(g_datumBaseStorage, base) || !read_value(g_datumStrideStorage, stride)) {
+        return nullptr;
+    }
+    return reinterpret_cast<std::byte*>(base
+                                        + static_cast<std::uintptr_t>(stride) * (handle & 0x1FFFU));
+}
+
 /** Installs the generation-checked placed-object lifetime capture. */
 bool install() noexcept {
     AcquireSRWLockExclusive(&g_lock);
@@ -489,6 +515,26 @@ bool install() noexcept {
                          core::log::Level::warn,
                          "ev=world_objects stage=install result=fail reason=targets");
         return false;
+    }
+    // DEBUG_SAULO: report target-build anchors for offline caller and xref inspection.
+    {
+        std::array<char, 256> line{};
+        const int written = std::snprintf(
+            line.data(), line.size(),
+            "DEBUG_SAULO native_anchor instantiate=+0x%llX allocate=+0x%llX "
+            "create_entity=+0x%llX resolve_pair=+0x%llX",
+            static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(targets.instantiate)
+                                            - g_moduleBase),
+            static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(targets.allocate)
+                                            - g_moduleBase),
+            static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(targets.createEntity)
+                                            - g_moduleBase),
+            static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(targets.resolvePair)
+                                            - g_moduleBase));
+        if (written > 0 && static_cast<std::size_t>(written) < line.size()) {
+            core::log::write(core::log::Channel::client, core::log::Level::warn,
+                             {line.data(), static_cast<std::size_t>(written)});
+        }
     }
     g_resolvePair = reinterpret_cast<ResolvePair>(targets.resolvePair);
     g_glueStrideStorage = reinterpret_cast<const std::uint32_t*>(

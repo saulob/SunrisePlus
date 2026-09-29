@@ -270,8 +270,11 @@ bool resolve_object(const reader::Source& source,
         group = storage.memo[slot].group;
         return true;
     }
-    storage.memo[slot].tag = objectTag;
-    storage.memo[slot].group = kNotARosterGroup;
+    ObjectMemo& memo = storage.memo[slot];
+    memo.tag = objectTag;
+    memo.group = kNotARosterGroup;
+    memo.registryKey = 0;
+    memo.debug = {};
     ++storage.reads;
     if (!reader::read_tag(source, scratch, objectTag, storage.object)) {
         return true;
@@ -285,6 +288,13 @@ bool resolve_object(const reader::Source& source,
 
     layouts::RosterGroup candidate{};
     tables::Array declared{};
+    // DEBUG_SAULO: the key and each refusal are kept for the Tower carrier trace.
+    std::uint32_t key = 0;
+    if (tables::object_key(storage.object, key)) {
+        memo.registryKey = key;
+    }
+    memo.debug.admitted = tables::carries_roster_slot(storage.object);
+    memo.debug.reason = key == 0 ? "no_key" : !memo.debug.admitted ? "slot_types" : "slot_array";
     if (!tables::object_key(storage.object, candidate.registryKey) || candidate.registryKey == 0
         || !tables::carries_roster_slot(storage.object)
         || !tables::object_slots(storage.object, declared) || declared.count == 0
@@ -294,8 +304,12 @@ bool resolve_object(const reader::Source& source,
     storage.slotCount = 0;
     storage.slotsOverflowed = false;
     storage.exits = {};
-    if (!collect_descriptors(source, scratch, storage, storage.object, candidate.registryKey)
-        || !fill_slots(storage, declared.count, candidate)) {
+    const bool walked =
+        collect_descriptors(source, scratch, storage, storage.object, candidate.registryKey);
+    memo.debug.declared = static_cast<std::uint16_t>(declared.count);
+    memo.debug.descriptors = static_cast<std::uint16_t>(storage.slotCount);
+    if (!walked || !fill_slots(storage, declared.count, candidate)) {
+        memo.debug.reason = walked ? "no_descriptors" : "walk_failed";
         report_unresolved(objectTag, candidate.registryKey, declared.count, storage);
         // A completed walk may prove that some declared slots have no descriptor. A failed walk
         // cannot distinguish that absence from unread content, so it refuses the whole group.
@@ -303,6 +317,7 @@ bool resolve_object(const reader::Source& source,
         return true;
     }
     candidate.objectTag = objectTag;
+    memo.debug.reason = "group";
     // One key may carry different layouts in different activities, so only exact layouts reuse.
     for (std::size_t index = 0; index < storage.groupCount; ++index) {
         if (same_group_layout(storage.groups[index], candidate)) {
@@ -319,6 +334,15 @@ bool resolve_object(const reader::Source& source,
     group = storage.memo[slot].group;
     ++storage.groupCount;
     return true;
+}
+
+/** @return The object's memo row once it has been resolved, or null. */
+const ObjectMemo* memo_of(const RosterStorage& storage, std::uint32_t objectTag) noexcept {
+    const std::size_t slot = memo_slot(storage, objectTag);
+    if (slot == kObjectMemoCapacity || storage.memo[slot].tag != objectTag) {
+        return nullptr;
+    }
+    return &storage.memo[slot];
 }
 
 } // namespace sunrise::client::content::scenarios

@@ -1,10 +1,12 @@
 #include "activity_sdk_squad_runtime.h"
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <limits>
 #include <string_view>
 
+#include "../../core/logging/log.h"
 #include "../../middleware/content/packages/tables/region_reader.h"
 #include "../../state/activity/runtime.h"
 #include "../../state/build_data/runtime.h"
@@ -94,9 +96,13 @@ struct PreparedSquad final {
 [[nodiscard]] bool authored_profile(const sdk::Catalog& catalog,
                                     const format::Squad& squad,
                                     std::span<const std::int32_t> requestedCounts,
-                                    std::array<std::int8_t, 4>& output) noexcept {
+                                    std::array<std::int8_t, 4>& output,
+                                    std::size_t& rejectedMember,
+                                    const char*& rejection) noexcept {
     output = {};
     const auto members = sdk::squad_members(catalog, squad);
+    rejectedMember = members.size();
+    rejection = "no_profile_member";
     const auto actors = catalog.actor_classes();
     bool found = false;
     // A named type-2 member needs its parent's authored profile but zero loose actors.
@@ -107,12 +113,20 @@ struct PreparedSquad final {
             continue;
         }
         const format::SquadMember& member = members[index];
-        if ((member.flags & format::kSquadMemberActorClassExact) == 0
-            || member.actorClassIndex >= actors.size()) {
+        if ((member.flags & format::kSquadMemberActorClassExact) == 0) {
+            rejectedMember = index;
+            rejection = "actor_class_not_exact";
+            return false;
+        }
+        if (member.actorClassIndex >= actors.size()) {
+            rejectedMember = index;
+            rejection = "actor_class_index_invalid";
             return false;
         }
         const auto& candidate = actors[member.actorClassIndex].authoredSpawnProfile;
         if (found && candidate != output) {
+            rejectedMember = index;
+            rejection = "authored_profile_mismatch";
             return false;
         }
         output = candidate;
@@ -296,6 +310,130 @@ struct PreparedSquad final {
     return Status::ready;
 }
 
+/** DEBUG_SAULO: one result already logged on this thread during the diagnostic run. */
+struct DebugSauloTraceStamp {
+    std::uint32_t squadRow{};
+    Status status{Status::ready};
+    const char* reason{};
+    std::size_t member{};
+};
+
+/** DEBUG_SAULO: log a confirmed Tower squad evaluation once per row, status and reason. */
+void trace_tower_squad(const sdk::Catalog& catalog,
+                       const format::Scenario& scenario,
+                       const format::Squad& squad,
+                       std::uint32_t squadRow,
+                       std::span<const std::int32_t> requestedCounts,
+                       Status status,
+                       const char* reason,
+                       std::size_t rejectedMember = static_cast<std::size_t>(-1),
+                       const host::ScriptableTarget* target = nullptr) noexcept {
+    const auto objects = catalog.objects();
+    if (scenario.tag != 0x80B4A0F4U || squad.objectIndex >= objects.size()) {
+        return;
+    }
+    const format::Object& object = objects[squad.objectIndex];
+    const bool yuna = object.objectTag == 0x80B4A54AU && object.objectKey == 0x2EFB59ADU;
+    const bool xur = object.objectTag == 0x80B4AD29U && object.objectKey == 0x728E75D1U;
+    if (!yuna && !xur) {
+        return;
+    }
+    // DEBUG_SAULO: availability can be queried each frame; retain only distinct diagnostics.
+    static thread_local std::array<DebugSauloTraceStamp, 64> emitted{};
+    static thread_local std::size_t emittedCount = 0;
+    for (std::size_t index = 0; index < emittedCount; ++index) {
+        const DebugSauloTraceStamp& prior = emitted[index];
+        if (prior.squadRow == squadRow && prior.status == status && prior.reason == reason
+            && prior.member == rejectedMember) {
+            return;
+        }
+    }
+    if (emittedCount == emitted.size()) {
+        return;
+    }
+    emitted[emittedCount++] = {squadRow, status, reason, rejectedMember};
+    core::log::writef(core::log::Channel::server,
+                      core::log::Level::warn,
+                      "DEBUG_SAULO squad_runtime squad_row=%u object=0x%08X carrier=0x%08X "
+                      "spawner=0x%08X spawnrule=0x%08X flags=0x%08X required=0x%08X "
+                      "missing=0x%08X status=%s reason=%s",
+                      squadRow,
+                      object.objectTag,
+                      object.objectKey,
+                      squad.spawnerConfigTag,
+                      squad.spawnRuleConfigTag,
+                      squad.flags,
+                      format::kSquadRunnableMask,
+                      format::kSquadRunnableMask & ~squad.flags,
+                      status_name(status),
+                      reason);
+    if (target != nullptr) {
+        core::log::writef(core::log::Channel::server,
+                          core::log::Level::warn,
+                          "DEBUG_SAULO squad_runtime_target squad_row=%u group=%u slot=%u "
+                          "state_local=%u region=%d status=ready",
+                          squadRow,
+                          static_cast<unsigned>(target->rosterGroupIndex),
+                          static_cast<unsigned>(target->slotIndex),
+                          target->stateLocalRoster ? 1U : 0U,
+                          target->stateLocalRegion);
+    }
+    if (status != Status::notRunnable || rejectedMember != static_cast<std::size_t>(-1)) {
+        // DEBUG_SAULO: ready and profile refusals expose only real member and actor fields.
+        const auto members = sdk::squad_members(catalog, squad);
+        const auto actors = catalog.actor_classes();
+        for (std::size_t index = 0; index < members.size() && index < requestedCounts.size();
+             ++index) {
+            const format::SquadMember& member = members[index];
+            if (member.actorClassIndex < actors.size()) {
+                const format::ActorClass& actor = actors[member.actorClassIndex];
+                const auto& profile = actor.authoredSpawnProfile;
+                core::log::writef(
+                    core::log::Channel::server,
+                    core::log::Level::warn,
+                    "DEBUG_SAULO squad_runtime_member squad_row=%u member=%zu requested=%d "
+                    "member_flags=0x%08X actor_class=%u exact=%u actor_tag=0x%08X "
+                    "profile=%d,%d,%d,%d rejected=%u",
+                    squadRow,
+                    index,
+                    requestedCounts[index],
+                    member.flags,
+                    member.actorClassIndex,
+                    (member.flags & format::kSquadMemberActorClassExact) != 0 ? 1U : 0U,
+                    actor.definitionTag,
+                    static_cast<int>(profile[0]),
+                    static_cast<int>(profile[1]),
+                    static_cast<int>(profile[2]),
+                    static_cast<int>(profile[3]),
+                    index == rejectedMember ? 1U : 0U);
+                if (yuna && actor.definitionTag == 0x80C93820U) {
+                    core::log::writef(core::log::Channel::server,
+                                      core::log::Level::warn,
+                                      "DEBUG_SAULO yuna_path stage=actor_class tag=0x%08X "
+                                      "squad_row=%u member=%zu",
+                                      actor.definitionTag,
+                                      squadRow,
+                                      index);
+                }
+            } else {
+                core::log::writef(core::log::Channel::server,
+                                  core::log::Level::warn,
+                                  "DEBUG_SAULO squad_runtime_member squad_row=%u member=%zu "
+                                  "requested=%d member_flags=0x%08X actor_class=%u exact=%u "
+                                  "rejected=%u",
+                                  squadRow,
+                                  index,
+                                  requestedCounts[index],
+                                  member.flags,
+                                  member.actorClassIndex,
+                                  (member.flags & format::kSquadMemberActorClassExact) != 0 ? 1U
+                                                                                           : 0U,
+                                  index == rejectedMember ? 1U : 0U);
+            }
+        }
+    }
+}
+
 /** Resolves one public generated squad request without mutating transport state. */
 [[nodiscard]] Status prepare(const sdk::BoundView& view,
                              std::uint32_t squadRow,
@@ -306,9 +444,20 @@ struct PreparedSquad final {
     server::bap::ActivityLinkView link{};
     const Status liveStatus = binding_status(view, link);
     if (liveStatus != Status::ready) {
+        if (view.catalog != nullptr && squadRow < view.catalog->squads().size()) {
+            if (const format::Scenario* const bound = sdk::bound_scenario(view)) {
+                trace_tower_squad(*view.catalog, *bound, view.catalog->squads()[squadRow],
+                                  squadRow, requestedCounts, liveStatus, status_name(liveStatus));
+            }
+        }
         return liveStatus;
     }
     if (!squad_auth::valid_mode(mode)) {
+        if (squadRow < view.catalog->squads().size()) {
+            trace_tower_squad(*view.catalog, *sdk::bound_scenario(view),
+                              view.catalog->squads()[squadRow], squadRow, requestedCounts,
+                              Status::invalidMode, "invalid_mode");
+        }
         return Status::invalidMode;
     }
 
@@ -320,34 +469,61 @@ struct PreparedSquad final {
     }
     const format::Squad& squad = squads[squadRow];
     if (squad.scenarioIndex != view.scenarioRow) {
+        // DEBUG_SAULO: retain the exact preflight refusal for confirmed Tower squads.
+        trace_tower_squad(catalog, *scenario, squad, squadRow, requestedCounts,
+                          Status::wrongScenario, "wrong_scenario");
         return Status::wrongScenario;
     }
     if ((squad.flags & format::kSquadRunnableMask) != format::kSquadRunnableMask) {
+        // DEBUG_SAULO: first and only flag-based not_runnable exit.
+        trace_tower_squad(catalog, *scenario, squad, squadRow, requestedCounts,
+                          Status::notRunnable, "flags_missing");
         return Status::notRunnable;
     }
     const Status members = member_status(catalog, squad, squadRow, requestedCounts);
     if (members != Status::ready) {
+        // DEBUG_SAULO: member validation precedes authored profile evaluation.
+        trace_tower_squad(catalog, *scenario, squad, squadRow, requestedCounts,
+                          members, status_name(members));
         return members;
     }
-    if (!authored_profile(catalog, squad, requestedCounts, output.authoredProfile)) {
+    std::size_t rejectedMember = 0;
+    const char* profileRejection = nullptr;
+    if (!authored_profile(catalog, squad, requestedCounts, output.authoredProfile,
+                          rejectedMember, profileRejection)) {
+        // DEBUG_SAULO: second not_runnable exit, with the helper's exact failed check.
+        trace_tower_squad(catalog, *scenario, squad, squadRow, requestedCounts,
+                          Status::notRunnable, profileRejection, rejectedMember);
         return Status::notRunnable;
     }
 
     const auto occurrences = catalog.occurrences();
     if (squad.occurrenceIndex >= occurrences.size()) {
+        // DEBUG_SAULO: no occurrence row survived for this squad.
+        trace_tower_squad(catalog, *scenario, squad, squadRow, requestedCounts,
+                          Status::invalidSquad, "occurrence_index_invalid");
         return Status::invalidSquad;
     }
     const format::Occurrence& occurrence = occurrences[squad.occurrenceIndex];
     if (occurrence.scenarioIndex != squad.scenarioIndex
         || occurrence.objectIndex != squad.objectIndex) {
+        // DEBUG_SAULO: occurrence points at another scenario or object.
+        trace_tower_squad(catalog, *scenario, squad, squadRow, requestedCounts,
+                          Status::invalidSquad, "occurrence_join_mismatch");
         return Status::invalidSquad;
     }
     const format::Object* generatedObject = nullptr;
     const format::Slot* generatedSlot = nullptr;
     if (!valid_generated_slot(catalog, squad, generatedObject, generatedSlot)) {
+        // DEBUG_SAULO: the generated source slot failed its exact schema checks.
+        trace_tower_squad(catalog, *scenario, squad, squadRow, requestedCounts,
+                          Status::invalidSquad, "generated_slot_invalid");
         return Status::invalidSquad;
     }
     if (!sdk::materialize_roster_group(catalog, *generatedObject, output.generatedRosterGroup)) {
+        // DEBUG_SAULO: the generated object could not form a valid roster row.
+        trace_tower_squad(catalog, *scenario, squad, squadRow, requestedCounts,
+                          Status::invalidSquad, "generated_roster_invalid");
         output = {};
         return Status::invalidSquad;
     }
@@ -362,11 +538,17 @@ struct PreparedSquad final {
                                          link.effectiveRegion,
                                          output.target);
     if (target != Status::ready) {
+        // DEBUG_SAULO: target matching failed after profile and roster construction.
+        trace_tower_squad(catalog, *scenario, squad, squadRow, requestedCounts,
+                          target, "target_resolution");
         output = {};
         return target;
     }
     output.effectiveRegion = link.effectiveRegion;
     output.activityClientGeneration = link.activityClientGeneration;
+    // DEBUG_SAULO: successful preparation is recorded for comparison with rejections.
+    trace_tower_squad(catalog, *scenario, squad, squadRow, requestedCounts,
+                      Status::ready, "ready", static_cast<std::size_t>(-1), &output.target);
     return Status::ready;
 }
 

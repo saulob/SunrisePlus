@@ -81,11 +81,66 @@ void note_candidate(Walk& walk,
 }
 
 /**
+ * DEBUG_SAULO: names one object the Tower's registries reach and what became of it.
+ * @param storage Working storage holding the object's memo row.
+ * @param objectTag Object reached.
+ * @param bubbleIndex Scenario bubble whose state named it.
+ * @param sliceSetIndex Slice-set index of that state; its bubble bit is what publishing uses.
+ * @param descriptor Registry array that named it: 0 primary, 1 second, 2 third.
+ */
+void trace_tower_carrier(const RosterStorage& storage,
+                         std::uint32_t objectTag,
+                         std::uint64_t bubbleIndex,
+                         std::uint32_t sliceSetIndex,
+                         std::size_t descriptor) noexcept {
+    if (storage.destinationTag != kDebugSauloTowerScenarioTag) {
+        return;
+    }
+    const ObjectMemo* memo = memo_of(storage, objectTag);
+    if (memo == nullptr) {
+        return;
+    }
+    const DebugCarrier& debug = memo->debug;
+    core::log::writef(core::log::Channel::state,
+                      core::log::Level::warn,
+                      "DEBUG_SAULO tower_carrier key=0x%08X object=0x%08X bubble=%llu slice_bit=%u "
+                      "registry=%zu admitted=%u declared=%u descriptors=%u group=%d reason=%s",
+                      memo->registryKey,
+                      objectTag,
+                      static_cast<unsigned long long>(bubbleIndex),
+                      sliceSetIndex / tables::kSliceSetIndexFactor,
+                      descriptor,
+                      debug.admitted ? 1U : 0U,
+                      static_cast<unsigned>(debug.declared),
+                      static_cast<unsigned>(debug.descriptors),
+                      memo->group == kNotARosterGroup ? -1 : static_cast<int>(memo->group),
+                      debug.reason);
+    // DEBUG_SAULO: label the three squad-backed encounter objects at the scenario-roster stage.
+    const bool yuna = objectTag == 0x80B4A54AU && memo->registryKey == 0x2EFB59ADU;
+    const bool xur = objectTag == 0x80B4AD29U && memo->registryKey == 0x728E75D1U;
+    const bool saladin = objectTag == 0x80B4A5CDU && memo->registryKey == 0x27060E6CU;
+    if (yuna || xur || saladin) {
+        core::log::writef(core::log::Channel::state,
+                          core::log::Level::warn,
+                          "DEBUG_SAULO %s_path stage=encounter tag=0x%08X carrier=0x%08X "
+                          "bubble=%llu registry=%zu group=%d reason=%s",
+                          yuna ? "yuna" : xur ? "xur" : "saladin",
+                          objectTag,
+                          memo->registryKey,
+                          static_cast<unsigned long long>(bubbleIndex),
+                          descriptor,
+                          memo->group == kNotARosterGroup ? -1 : static_cast<int>(memo->group),
+                          debug.reason);
+    }
+}
+
+/**
  * Walks one slice-set state to every placed object its registry names.
  * @param source Package directory and borrowed block keys.
  * @param scratch Lock-owned block storage.
  * @param storage Working storage for this pass.
  * @param walk Accumulator for one destination.
+ * @param bubbleIndex Scenario bubble of the current authored state, for diagnostics only.
  * @param sliceSetIndex Slice-set index of the current authored state.
  * @return True when the registry walked without running out of fixed storage.
  */
@@ -93,6 +148,7 @@ void note_candidate(Walk& walk,
                                  reader::Scratch& scratch,
                                  RosterStorage& storage,
                                  Walk& walk,
+                                 std::uint64_t bubbleIndex,
                                  std::uint32_t sliceSetIndex) noexcept {
     for (std::size_t descriptor = 0; descriptor < kRegistryDescriptors.size(); ++descriptor) {
         tables::Array objects{};
@@ -110,6 +166,7 @@ void note_candidate(Walk& walk,
             if (!resolve_object(source, scratch, storage, objectTag, sliceSetIndex, group)) {
                 return false;
             }
+            trace_tower_carrier(storage, objectTag, bubbleIndex, sliceSetIndex, descriptor);
             if (group == kNotARosterGroup) {
                 continue;
             }
@@ -167,7 +224,7 @@ void note_candidate(Walk& walk,
                 tables::observe_unresolved_slice_set(walk.intersection);
                 continue;
             }
-            if (!walk_registry(source, scratch, storage, walk, sliceSetIndex)) {
+            if (!walk_registry(source, scratch, storage, walk, bubbleIndex, sliceSetIndex)) {
                 return false;
             }
         }

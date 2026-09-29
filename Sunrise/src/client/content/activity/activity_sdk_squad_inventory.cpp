@@ -12,6 +12,7 @@
 #include <unordered_map>
 #include <utility>
 
+#include "../../../core/logging/log.h"
 #include "../../../middleware/content/packages/tables/authored_placement_reader.h"
 #include "../../../middleware/content/packages/tables/authored_squad_reader.h"
 #include "../../../middleware/content/packages/tables/scenario_reader.h"
@@ -355,6 +356,28 @@ bool collect_config(void* opaque,
         ObjectPaths& object = (*context.collector->objects)[context.objectIndex];
         object.configs.push_back(
             {configTag, context.nextConfigOrdinal++, context.declaredBubbleIndex});
+        // DEBUG_SAULO: observe confirmed squad-backed Tower configs after structural parsing.
+        const bool yunaConfig = configTag == 0x80B4A3F8U || configTag == 0x80B4A3FBU;
+        const bool xurConfig = configTag == 0x80B4A973U;
+        const bool saladinConfig = configTag == 0x80B4A46DU || configTag == 0x80B4A473U;
+        if (yunaConfig || xurConfig || saladinConfig) {
+            const topology::Object& owner =
+                context.collector->topology->objects[context.objectIndex];
+            const bool saladin = saladinConfig && owner.objectTag == 0x80B4A5CDU
+                                 && owner.objectKey == 0x27060E6CU;
+            if (yunaConfig || xurConfig || saladin) {
+                core::log::writef(core::log::Channel::client,
+                                  core::log::Level::warn,
+                                  "DEBUG_SAULO %s_path stage=config tag=0x%08X object=0x%08X "
+                                  "carrier=0x%08X primary=0x%08X secondary=0x%08X",
+                                  saladin ? "saladin" : xurConfig ? "xur" : "yuna",
+                                  configTag,
+                                  owner.objectTag,
+                                  owner.objectKey,
+                                  pair.primaryClass,
+                                  pair.secondaryClass);
+            }
+        }
         return true;
     } catch (...) {
         return false;

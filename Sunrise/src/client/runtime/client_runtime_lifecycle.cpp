@@ -13,6 +13,7 @@
 #include "../hooks/cine_probe/cine_probe.h"
 #include "../hooks/config_getter/config_getter_lifecycle.h"
 #include "../hooks/cursor/runtime.h"
+#include "../hooks/entity_spawn_test/entity_spawn_test.h"
 #include "../hooks/graphics/graphics_hook_lifecycle.h"
 #include "../hooks/hitch_probe/hitch_probe.h"
 #include "../hooks/inactivity/inactivity_override.h"
@@ -118,6 +119,8 @@ bool shutdown() noexcept {
     hooks::ability_no_cooldown::uninstall();
     hooks::inactivity::uninstall();
     hooks::noclip::uninstall();
+    // Before teleport: the update detour reads the controlled handle teleport publishes.
+    hooks::entity_spawn_test::uninstall();
     hooks::teleport::uninstall();
     if (!hooks::config_getter::uninstall()) {
         ReleaseSRWLockExclusive(&runtime::g_lock);

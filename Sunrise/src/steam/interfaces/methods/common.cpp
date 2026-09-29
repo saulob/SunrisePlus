@@ -11,8 +11,8 @@ namespace {
 constexpr std::uint64_t kLocalSteamId = 0x0110000130AA9EC5ULL;
 /** Steam universe value for the public network. */
 constexpr int kConnectedUniverse = 1;
-/** An empty country token turns region filtering off. */
-constexpr char kCountry[] = "";
+/** Korean country token for the temporary region experiment. */
+constexpr char kCountry[] = "KR";
 /** FNV-1a 64-bit offset basis for stable action handles. */
 constexpr std::uint64_t kFnvOffsetBasis = 14695981039346656037ULL;
 /** FNV-1a 64-bit prime for stable action handles. */
@@ -172,7 +172,7 @@ int connected_universe([[maybe_unused]] void* self) noexcept {
     return kConnectedUniverse;
 }
 
-/** @return Empty token, so region filtering stays off. */
+/** @return Korean country token for the region experiment. */
 const char* country([[maybe_unused]] void* self) noexcept {
     return kCountry;
 }

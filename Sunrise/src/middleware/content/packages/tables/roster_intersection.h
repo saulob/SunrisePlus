@@ -20,7 +20,7 @@ inline constexpr std::size_t kSliceSetCapacity = 64;
  * No installed destination reaches more than 2 objects carrying a wire slot type. This leaves
  * room to spare without a heap allocation.
  */
-inline constexpr std::size_t kRosterKeyCapacity = 16;
+inline constexpr std::size_t kRosterKeyCapacity = 32;
 
 static_assert(kSliceSetCapacity * kSliceSetIndexFactor == 512);
 // One bit per slice set, so the mask must cover the whole capacity.

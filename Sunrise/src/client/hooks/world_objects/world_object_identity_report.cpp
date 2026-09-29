@@ -4,6 +4,7 @@
 #include <Windows.h>
 
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -11,6 +12,7 @@
 #include <span>
 
 #include "../../../core/logging/log.h"
+#include "../../../middleware/content/packages/tables/authored_placement_reader.h"
 #include "../../memory/current_process_memory.h"
 #include "internal.h"
 #include "world_object_registry.h"
@@ -20,9 +22,43 @@ namespace {
 
 /** Stack frames reported above one off-ledger allocation. */
 constexpr std::size_t kFrameCount = 4;
+/** DEBUG_SAULO: bound the additional native-path lines for one manual run. */
+constexpr std::uint32_t kNativeInstantiateTraceBudget = 16384;
+constexpr std::uint32_t kNativeAllocateTraceBudget = 16384;
+std::atomic_uint32_t g_nativeInstantiateTraceCount{};
+std::atomic_uint32_t g_nativeAllocateTraceCount{};
 
 /** Set while this thread is inside the instantiate detour, whose allocation is already reported. */
 thread_local bool t_inInstantiate{};
+
+namespace tables = sunrise::middleware::content::packages::tables;
+
+/** Reads only fields established for an authored placement entry in this build. */
+struct PlacementCandidate final {
+    std::uint32_t tag{kNone};
+    std::uint32_t nameHash{kNone};
+    std::uint64_t identity{};
+    bool tagRead{};
+    bool hashRead{};
+    bool identityRead{};
+};
+
+[[nodiscard]] PlacementCandidate placement_candidate(const void* entry,
+                                                     std::int32_t objectListTag,
+                                                     std::int32_t entryIndex) noexcept {
+    PlacementCandidate candidate{};
+    if (entry == nullptr || objectListTag == -1 || entryIndex == -1) {
+        return candidate;
+    }
+    const auto address = reinterpret_cast<std::uintptr_t>(entry);
+    candidate.tagRead = read_at(address + tables::kAuthoredPlacementClassListOffset,
+                                candidate.tag);
+    candidate.hashRead = read_at(address + tables::kAuthoredPlacementNameHashOffset,
+                                 candidate.nameHash);
+    candidate.identityRead = read_at(address + tables::kAuthoredPlacementIdentifierOffset,
+                                     candidate.identity);
+    return candidate;
+}
 
 /**
  * Reads the placed entry's authored world position, held at entry `+0x20`.
@@ -257,6 +293,8 @@ void report_dynamic_destroy(std::uint32_t handle) noexcept {
 
 } // namespace
 
+std::atomic_uint64_t g_nativeTraceSequence{};
+thread_local std::uint64_t t_nativeTraceRoot{};
 std::atomic<Instantiate> g_instantiateOriginal{nullptr};
 std::atomic<Destroy> g_destroyOriginal{nullptr};
 std::atomic<Allocate> g_allocateOriginal{nullptr};
@@ -269,10 +307,82 @@ __declspec(noinline) std::uint32_t* __fastcall instantiate(std::uint32_t* output
                                                            std::int32_t entryIndex) noexcept {
     ActiveCall active;
     const Instantiate original = g_instantiateOriginal.load(std::memory_order_acquire);
+    const std::uint64_t sequence =
+        g_nativeTraceSequence.fetch_add(1, std::memory_order_relaxed) + 1;
+    const std::uint64_t priorRoot = t_nativeTraceRoot;
+    const std::uint64_t correlationId = priorRoot != 0 ? priorRoot : sequence;
+    const std::uintptr_t caller = reinterpret_cast<std::uintptr_t>(_ReturnAddress());
+    const bool inspect = g_accepting.load(std::memory_order_acquire)
+                         && g_nativeInstantiateTraceCount.load(std::memory_order_relaxed)
+                                < kNativeInstantiateTraceBudget;
+    const PlacementCandidate candidate =
+        inspect ? placement_candidate(entry, objectListTag, entryIndex) : PlacementCandidate{};
+    std::uint32_t before = kNone;
+    const bool beforeRead = inspect && read_value(output, before);
+    const int watchedNpc = g_accepting.load(std::memory_order_acquire)
+                               ? trace_npc_instantiate_enter(entry, objectListTag, entryIndex,
+                                                             caller)
+                               : -1;
+    t_nativeTraceRoot = correlationId;
     t_inInstantiate = true;
     std::uint32_t* const result =
         original != nullptr ? original(output, entry, objectListTag, entryIndex) : output;
     t_inInstantiate = false;
+    t_nativeTraceRoot = priorRoot;
+    trace_npc_instantiate_return(watchedNpc, entry, result, caller);
+    const std::uint32_t traceCount = g_accepting.load(std::memory_order_acquire)
+                                         ? g_nativeInstantiateTraceCount.fetch_add(1, std::memory_order_relaxed)
+                                         : kNativeInstantiateTraceBudget + 1;
+    if (traceCount == kNativeInstantiateTraceBudget) {
+        core::log::write(core::log::Channel::client, core::log::Level::warn,
+                         "DEBUG_SAULO native_create stage=instantiate result=trace_limit");
+    }
+    if (traceCount < kNativeInstantiateTraceBudget) {
+        std::uint32_t after = kNone;
+        const bool afterRead = read_value(result, after);
+        DatumIdentity datum{};
+        const bool datumRead = afterRead && after != kNone
+                               && read_datum_identity(after, datum);
+        std::array<char, 1024> line{};
+        const int written = std::snprintf(
+            line.data(), line.size(),
+            "DEBUG_SAULO native_create stage=instantiate seq=%llu corr_id=%llu "
+            "correlation=%s tid=%lu caller_abs=0x%llX caller_rva=+0x%llX "
+            "return_abs=0x%llX entry_ptr=%p list=0x%08X entry=%d "
+            "candidate_tag=0x%08X candidate_class=unknown candidate_hash=0x%08X "
+            "source=%s known_entity=%s identity=0x%016llX "
+            "before=0x%08X after=0x%08X self=0x%08X datum_index=%u "
+            "datum_list=0x%08X datum_entry=%u datum_identity=0x%016llX "
+            "glue=0x%08X network=0x%08X tag_read=%u hash_read=%u "
+            "identity_read=%u before_read=%u after_read=%u datum_read=%u",
+            static_cast<unsigned long long>(sequence),
+            static_cast<unsigned long long>(correlationId),
+            priorRoot != 0 ? "nested" : "uncertain",
+            static_cast<unsigned long>(GetCurrentThreadId()),
+            static_cast<unsigned long long>(caller),
+            static_cast<unsigned long long>(caller >= g_moduleBase ? caller - g_moduleBase : caller),
+            static_cast<unsigned long long>(caller),
+            const_cast<void*>(entry), static_cast<std::uint32_t>(objectListTag), entryIndex,
+            candidate.tag, candidate.nameHash,
+            candidate.tagRead ? "placement_entry.class_list" : "none",
+            candidate.tagRead ? known_entity_name(candidate.tag) : "none",
+            static_cast<unsigned long long>(candidate.identity), before, after,
+            datumRead ? datum.selfHandle : kNone,
+            afterRead && after != kNone ? after & kEntityIndexMask : kNone,
+            datumRead ? datum.objectListTag : kNone,
+            datumRead ? datum.entryIndex : kNone,
+            static_cast<unsigned long long>(datumRead ? datum.placementIdentity : 0),
+            t_entityGlue, t_entityNetwork,
+            static_cast<unsigned>(candidate.tagRead),
+            static_cast<unsigned>(candidate.hashRead),
+            static_cast<unsigned>(candidate.identityRead),
+            static_cast<unsigned>(beforeRead), static_cast<unsigned>(afterRead),
+            static_cast<unsigned>(datumRead));
+        if (written > 0 && static_cast<std::size_t>(written) < line.size()) {
+            core::log::write(core::log::Channel::client, core::log::Level::warn,
+                             {line.data(), static_cast<std::size_t>(written)});
+        }
+    }
     if (result != nullptr) {
         if (objectListTag == -1 || entryIndex == -1) {
             report_dynamic(*result, entry, reinterpret_cast<std::uintptr_t>(_ReturnAddress()));
@@ -294,11 +404,83 @@ __declspec(noinline) std::uint32_t* __fastcall allocate(std::uint32_t* output,
                                                         std::int32_t entryIndex) noexcept {
     ActiveCall active;
     const Allocate original = g_allocateOriginal.load(std::memory_order_acquire);
+    const std::uint64_t sequence =
+        g_nativeTraceSequence.fetch_add(1, std::memory_order_relaxed) + 1;
+    const std::uint64_t priorRoot = t_nativeTraceRoot;
+    const std::uint64_t correlationId = priorRoot != 0 ? priorRoot : sequence;
+    const std::uintptr_t caller = reinterpret_cast<std::uintptr_t>(_ReturnAddress());
+    const bool insideInstantiate = t_inInstantiate;
+    const bool inspect = g_accepting.load(std::memory_order_acquire)
+                         && g_nativeAllocateTraceCount.load(std::memory_order_relaxed)
+                                < kNativeAllocateTraceBudget;
+    const PlacementCandidate candidate =
+        inspect ? placement_candidate(entry, objectListTag, entryIndex) : PlacementCandidate{};
+    std::uint32_t before = kNone;
+    const bool beforeRead = inspect && read_value(output, before);
+    t_nativeTraceRoot = correlationId;
     std::uint32_t* const result =
         original != nullptr ? original(output, entry, objectListTag, entryIndex) : output;
+    t_nativeTraceRoot = priorRoot;
+    const std::uint32_t traceCount = g_accepting.load(std::memory_order_acquire)
+                                         ? g_nativeAllocateTraceCount.fetch_add(1, std::memory_order_relaxed)
+                                         : kNativeAllocateTraceBudget + 1;
+    if (traceCount == kNativeAllocateTraceBudget) {
+        core::log::write(core::log::Channel::client, core::log::Level::warn,
+                         "DEBUG_SAULO native_create stage=allocate result=trace_limit");
+    }
+    if (traceCount < kNativeAllocateTraceBudget) {
+        std::uint32_t after = kNone;
+        const bool afterRead = read_value(result, after);
+        DatumIdentity datum{};
+        const bool datumRead = afterRead && after != kNone
+                               && read_datum_identity(after, datum);
+        std::array<char, 1024> line{};
+        const int written = std::snprintf(
+            line.data(), line.size(),
+            "DEBUG_SAULO native_create stage=allocate seq=%llu corr_id=%llu "
+            "correlation=%s tid=%lu caller_abs=0x%llX caller_rva=+0x%llX "
+            "return_abs=0x%llX inside_instantiate=%u entry_ptr=%p "
+            "list=0x%08X entry=%d candidate_tag=0x%08X candidate_class=unknown "
+            "candidate_hash=0x%08X source=%s known_entity=%s identity=0x%016llX "
+            "before=0x%08X after=0x%08X self=0x%08X datum_index=%u "
+            "datum_list=0x%08X datum_entry=%u datum_identity=0x%016llX "
+            "glue=0x%08X network=0x%08X tag_read=%u hash_read=%u "
+            "identity_read=%u before_read=%u after_read=%u datum_read=%u",
+            static_cast<unsigned long long>(sequence),
+            static_cast<unsigned long long>(correlationId),
+            priorRoot != 0 ? "nested" : "uncertain",
+            static_cast<unsigned long>(GetCurrentThreadId()),
+            static_cast<unsigned long long>(caller),
+            static_cast<unsigned long long>(caller >= g_moduleBase ? caller - g_moduleBase : caller),
+            static_cast<unsigned long long>(caller),
+            static_cast<unsigned>(insideInstantiate), const_cast<void*>(entry),
+            static_cast<std::uint32_t>(objectListTag), entryIndex,
+            candidate.tag, candidate.nameHash,
+            candidate.tagRead ? "placement_entry.class_list" : "none",
+            candidate.tagRead ? known_entity_name(candidate.tag) : "none",
+            static_cast<unsigned long long>(candidate.identity), before, after,
+            datumRead ? datum.selfHandle : kNone,
+            afterRead && after != kNone ? after & kEntityIndexMask : kNone,
+            datumRead ? datum.objectListTag : kNone,
+            datumRead ? datum.entryIndex : kNone,
+            static_cast<unsigned long long>(datumRead ? datum.placementIdentity : 0),
+            t_entityGlue, t_entityNetwork,
+            static_cast<unsigned>(candidate.tagRead),
+            static_cast<unsigned>(candidate.hashRead),
+            static_cast<unsigned>(candidate.identityRead),
+            static_cast<unsigned>(beforeRead), static_cast<unsigned>(afterRead),
+            static_cast<unsigned>(datumRead));
+        if (written > 0 && static_cast<std::size_t>(written) < line.size()) {
+            core::log::write(core::log::Channel::client, core::log::Level::warn,
+                             {line.data(), static_cast<std::size_t>(written)});
+        }
+    }
     if (!t_inInstantiate && result != nullptr && *result != kNone
         && g_accepting.load(std::memory_order_acquire)) {
         report_allocation(*result, reinterpret_cast<std::uintptr_t>(_ReturnAddress()));
+    }
+    if (g_accepting.load(std::memory_order_acquire)) {
+        trace_npc_allocation(entry, objectListTag, entryIndex, result, caller);
     }
     return result;
 }

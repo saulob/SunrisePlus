@@ -22,6 +22,7 @@
 #include "../hooks/cine_probe/cine_probe.h"
 #include "../hooks/config_getter/config_getter_lifecycle.h"
 #include "../hooks/cursor/runtime.h"
+#include "../hooks/entity_spawn_test/entity_spawn_test.h"
 #include "../hooks/graphics/graphics_hook_lifecycle.h"
 #include "../hooks/hitch_probe/hitch_probe.h"
 #include "../hooks/inactivity/inactivity_override.h"
@@ -204,6 +205,8 @@ void clear_game_targets() noexcept {
     (void)hooks::cine_probe::install();
     // Retains the native handle for package placements without publishing unnamed map objects.
     (void)hooks::world_objects::install();
+    // Yuna spawn test: the Sandbox spawner services its queue from PlayerComponentUpdate.
+    (void)hooks::entity_spawn_test::install();
     // The server asks for refresh slices through this and never calls the Client otherwise.
     if (!server::bap::register_client_investment_slice_consumer(
             &content::investment::worker::request_slice)) {

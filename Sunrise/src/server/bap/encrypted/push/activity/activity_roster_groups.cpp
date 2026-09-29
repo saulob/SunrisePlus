@@ -43,6 +43,28 @@ constexpr std::uint64_t kIdentityLowMask = 0xFFFFFFFFULL;
     if (!state::build_data::find_roster_group(tableIndex, group)) {
         return false;
     }
+    // DEBUG_SAULO: observe confirmed Tower groups as the msg-5 roster is assembled.
+    const bool yuna = group.objectTag == 0x80B4A54AU && group.registryKey == 0x2EFB59ADU;
+    const bool xur = group.objectTag == 0x80B4AD29U && group.registryKey == 0x728E75D1U;
+    const bool saladin = group.objectTag == 0x80B4A5CDU
+                         && group.registryKey == 0x27060E6CU;
+    if (yuna || xur || saladin) {
+        // DEBUG_SAULO: count the type-1 slots available for an authored squad.
+        std::size_t squadSlots = 0;
+        for (std::size_t index = 0; index < group.slotCount; ++index) {
+            squadSlots += group.slotTypes[index] == 1 ? 1U : 0U;
+        }
+        core::log::writef(core::log::Channel::server,
+                          core::log::Level::warn,
+                          "DEBUG_SAULO %s_path stage=roster_fill group=%u object=0x%08X "
+                          "carrier=0x%08X slots=%u squad_slots=%zu",
+                          yuna ? "yuna" : xur ? "xur" : "saladin",
+                          static_cast<unsigned>(tableIndex),
+                          group.objectTag,
+                          group.registryKey,
+                          static_cast<unsigned>(group.slotCount),
+                          squadSlots);
+    }
     roster.groups[slot].objectTag = group.objectTag;
     roster.groups[slot].key = group.registryKey;
     roster.groups[slot].slotTypes =

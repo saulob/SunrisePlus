@@ -8,10 +8,12 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <intrin.h>
 #include <span>
 #include <string_view>
 
 #include "../../../core/logging/log.h"
+#include "../../content/activity/activity_sdk_actor_rsat_inventory.h"
 #include "../../memory/current_process_memory.h"
 #include "../../patterns/registry.h"
 #include "../../patterns/signature_text.h"
@@ -73,6 +75,9 @@ constexpr std::size_t kViewMapOffset = 276, kViewMapStride = 6;
 /** Native global records have a fixed stride, pool bound, and view occupancy mask. */
 constexpr std::size_t kEntityRecordStride = 112, kEntityRecordCapacity = 1024;
 constexpr std::size_t kViewOccupiedOffset = 50464, kEntityFlagsOffset = 80;
+/** DEBUG_SAULO: enough observations for a single natural Tower load. */
+constexpr std::uint32_t kNativeEntityTraceBudget = 16384;
+std::atomic_uint32_t g_nativeEntityTraceCount{};
 
 struct EntityRecordPrefix final {
     std::uint8_t type{}, lifecycle{};
@@ -168,6 +173,26 @@ __declspec(noinline) bool __fastcall create_entity(void* definition,
                                                    std::uint32_t parent) {
     ActiveCall active;
     const auto original = g_createEntityOriginal.load(std::memory_order_acquire);
+    const std::uint64_t sequence =
+        g_nativeTraceSequence.fetch_add(1, std::memory_order_relaxed) + 1;
+    const std::uint64_t priorRoot = t_nativeTraceRoot;
+    const std::uint64_t correlationId = priorRoot != 0 ? priorRoot : sequence;
+    const std::uintptr_t caller = reinterpret_cast<std::uintptr_t>(_ReturnAddress());
+    // DEBUG_SAULO: these offsets describe package actor definitions. Whether this native pointer
+    // has that layout is an unproven hypothesis, so the fields are logged only as candidates.
+    namespace actor_layout = sunrise::client::content::activity::sdk_generation::actor_rsat_inventory;
+    std::uint32_t candidateHash = kNone;
+    std::uint8_t candidateObjectType = 0xFFU;
+    const auto definitionAddress = reinterpret_cast<std::uintptr_t>(definition);
+    const bool inspectDefinition = g_accepting.load(std::memory_order_acquire)
+                                   && g_nativeEntityTraceCount.load(std::memory_order_relaxed)
+                                          < kNativeEntityTraceBudget;
+    const bool candidateHashRead = inspectDefinition && definition != nullptr
+                                   && read_at(definitionAddress + actor_layout::kActorNameHashOffset,
+                                              candidateHash);
+    const bool candidateTypeRead = inspectDefinition && definition != nullptr
+                                   && read_at(definitionAddress + actor_layout::kActorObjectTypeOffset,
+                                              candidateObjectType);
     const auto savedGlue = t_entityGlue;
     const auto savedNetwork = t_entityNetwork;
     t_entityGlue = glue;
@@ -181,7 +206,44 @@ __declspec(noinline) bool __fastcall create_entity(void* definition,
             row,
             std::span(reinterpret_cast<std::byte*>(&t_entityNetwork), sizeof(t_entityNetwork))));
     }
+    t_nativeTraceRoot = correlationId;
     const bool result = original != nullptr && original(definition, data, glue, parent);
+    t_nativeTraceRoot = priorRoot;
+    const std::uint32_t traceCount = g_accepting.load(std::memory_order_acquire)
+                                         ? g_nativeEntityTraceCount.fetch_add(1, std::memory_order_relaxed)
+                                         : kNativeEntityTraceBudget + 1;
+    if (traceCount == kNativeEntityTraceBudget) {
+        core::log::write(core::log::Channel::client, core::log::Level::warn,
+                         "DEBUG_SAULO native_create stage=entity result=trace_limit");
+    }
+    if (traceCount < kNativeEntityTraceBudget) {
+        std::array<char, 768> line{};
+        const int written = std::snprintf(
+            line.data(), line.size(),
+            "DEBUG_SAULO native_create stage=entity seq=%llu corr_id=%llu "
+            "correlation=%s tid=%lu caller_abs=0x%llX caller_rva=+0x%llX "
+            "return_abs=0x%llX definition_ptr=%p data_ptr=%p "
+            "candidate_tag=unknown candidate_class=unknown candidate_hash=0x%08X "
+            "candidate_object_type=%u source=definition_ptr_actor_layout_hypothesis "
+            "candidate_read=%u,%u known_entity=none object_list=unknown "
+            "identity=unknown self=unknown datum_index=unknown "
+            "glue=0x%08X network=0x%08X parent=0x%08X result=%u",
+            static_cast<unsigned long long>(sequence),
+            static_cast<unsigned long long>(correlationId),
+            priorRoot != 0 ? "nested" : "uncertain",
+            static_cast<unsigned long>(GetCurrentThreadId()),
+            static_cast<unsigned long long>(caller),
+            static_cast<unsigned long long>(caller >= g_moduleBase ? caller - g_moduleBase : caller),
+            static_cast<unsigned long long>(caller),
+            definition, const_cast<void*>(data), candidateHash,
+            static_cast<unsigned>(candidateObjectType),
+            static_cast<unsigned>(candidateHashRead), static_cast<unsigned>(candidateTypeRead),
+            glue, t_entityNetwork, parent, static_cast<unsigned>(result));
+        if (written > 0 && static_cast<std::size_t>(written) < line.size()) {
+            core::log::write(core::log::Channel::client, core::log::Level::warn,
+                             {line.data(), static_cast<std::size_t>(written)});
+        }
+    }
     t_entityGlue = savedGlue;
     t_entityNetwork = savedNetwork;
     return result;

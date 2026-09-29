@@ -11,6 +11,7 @@
 #include <unordered_map>
 #include <utility>
 
+#include "../../../core/logging/log.h"
 #include "../../../middleware/crypto/sha256.h"
 #include "activity_sdk_squad_graph.h"
 #include "activity_sdk_squad_inventory.h"
@@ -592,6 +593,80 @@ bool link(const topology::Snapshot& topology,
             }
             source.row.members = {static_cast<std::uint32_t>(linked.members.size()),
                                   static_cast<std::uint32_t>(source.members.size())};
+            // DEBUG_SAULO: link confirmed encounter objects to generated squad rows.
+            if (source.row.objectIndex < topology.objects.size()) {
+                const topology::Object& owner = topology.objects[source.row.objectIndex];
+                const bool yuna = owner.objectTag == 0x80B4A54AU
+                                  && owner.objectKey == 0x2EFB59ADU;
+                const bool xur = owner.objectTag == 0x80B4AD29U
+                                 && owner.objectKey == 0x728E75D1U;
+                const bool saladin = owner.objectTag == 0x80B4A5CDU
+                                     && owner.objectKey == 0x27060E6CU;
+                if (yuna || xur || saladin) {
+                    core::log::writef(core::log::Channel::client,
+                                      core::log::Level::warn,
+                                      "DEBUG_SAULO %s_path stage=squad_catalog squad_row=%u "
+                                      "object=0x%08X carrier=0x%08X spawner=0x%08X "
+                                      "spawnrule=0x%08X flags=0x%08X members=%zu",
+                                      yuna ? "yuna" : xur ? "xur" : "saladin",
+                                      squadIndex,
+                                      owner.objectTag,
+                                      owner.objectKey,
+                                      source.row.spawnerConfigTag,
+                                      source.row.spawnRuleConfigTag,
+                                      source.row.flags,
+                                      source.members.size());
+                    // DEBUG_SAULO: report each retained member once at catalog construction.
+                    for (const SquadMember& member : source.members) {
+                        core::log::writef(
+                            core::log::Channel::client,
+                            core::log::Level::warn,
+                            "DEBUG_SAULO squad_catalog_member squad_row=%u member=%u "
+                            "object=0x%08X carrier=0x%08X member_flags=0x%08X "
+                            "actor_class=%u actor_tag=0x%08X default_count=%d",
+                            squadIndex,
+                            member.memberOrdinal,
+                            owner.objectTag,
+                            owner.objectKey,
+                            member.flags,
+                            member.actorClassIndex,
+                            member.actorDefinitionTag,
+                            member.defaultCount);
+                    }
+                }
+                if (yuna) {
+                    for (const SquadMember& member : source.members) {
+                        if (member.actorDefinitionTag == 0x80C93820U) {
+                            core::log::writef(
+                                core::log::Channel::client,
+                                core::log::Level::warn,
+                                "DEBUG_SAULO yuna_path stage=member_candidate tag=0x%08X "
+                                "squad_row=%u member=%u actor_class=%u flags=0x%08X",
+                                member.actorDefinitionTag,
+                                squadIndex,
+                                member.memberOrdinal,
+                                member.actorClassIndex,
+                                member.flags);
+                        }
+                    }
+                }
+                if (saladin) {
+                    for (const SquadMember& member : source.members) {
+                        if (member.actorDefinitionTag == 0x80BC8E4BU) {
+                            core::log::writef(
+                                core::log::Channel::client,
+                                core::log::Level::warn,
+                                "DEBUG_SAULO saladin_path stage=member_candidate tag=0x%08X "
+                                "squad_row=%u member=%u actor_class=%u flags=0x%08X",
+                                member.actorDefinitionTag,
+                                squadIndex,
+                                member.memberOrdinal,
+                                member.actorClassIndex,
+                                member.flags);
+                        }
+                    }
+                }
+            }
             for (SquadMember& member : source.members) {
                 member.squadIndex = squadIndex;
                 linked.members.push_back(std::move(member));

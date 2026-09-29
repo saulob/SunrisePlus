@@ -5,6 +5,7 @@
 #include <Windows.h>
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <imgui.h>
@@ -12,6 +13,7 @@
 #include "../../../core/ui/components/toggle/ui_toggle_component.h"
 #include "../../../server/bap/runtime.h"
 #include "../../../state/runtime/runtime.h"
+#include "../../hooks/entity_spawn_test/tower_npc_authored_restoration.h"
 #include "../../player/player_settings_store.h"
 
 namespace sunrise::client::ui::player {
@@ -171,6 +173,22 @@ void draw() noexcept {
     ImGui::Spacing();
     ImGui::Spacing();
     draw_season_progression();
+
+    namespace authored = client::hooks::entity_spawn_test::tower_npc_authored_restoration;
+    ImGui::Spacing();
+    ImGui::SeparatorText("Tower NPC Restoration");
+    ImGui::TextDisabled("Each returns as its own authored squad when you enter its area, Yuna "
+                        "with her props. Off stops new placements and removes her props; an NPC "
+                        "already present stays until the game unloads it.");
+    const auto authored_toggle = [](const char* label, authored::Npc npc) noexcept {
+        bool enabled = authored::authored_enabled(npc);
+        if (core::ui::components::toggle::control(label, enabled)) {
+            authored::set_authored_enabled(npc, enabled);
+        }
+    };
+    authored_toggle("Yuna##tower_authored_yuna", authored::Npc::yuna);
+    authored_toggle("Lord Saladin##tower_authored_saladin", authored::Npc::saladin);
+    authored_toggle("Xur##tower_authored_xur", authored::Npc::xur);
 }
 
 } // namespace sunrise::client::ui::player

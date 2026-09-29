@@ -5,9 +5,8 @@
 namespace sunrise::middleware::signon::extended {
 
 /**
- * Appends the optional SignOn success extended sub-message, which carries the network id.
- * Fields 14 to 16 are city, country and ISP text on a real server, not URLs, and nothing reads
- * them, so they are not sent.
+ * Appends the optional SignOn success extended sub-message and Korean country text in field 15.
+ * City and ISP fields remain absent.
  * @param success Writer bound to the success sub-message storage.
  * @return True when the sub-message fits.
  */

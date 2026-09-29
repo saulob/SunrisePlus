@@ -173,6 +173,39 @@ void publish_groups(Walk& walk, layouts::Definition& row) noexcept {
     // delta's own field 1, and a destination may reach one half and not the other.
     publish_per_bubble(walk, row);
     report_publish(walk, row);
+    // DEBUG_SAULO: one line per Tower candidate group, saying where it went.
+    if (row.tag != kDebugSauloTowerScenarioTag) {
+        return;
+    }
+    for (std::size_t index = 0; index < walk.candidateCount; ++index) {
+        const Candidate& candidate = walk.candidates[index];
+        const char* published = "none";
+        std::uint64_t mask = 0;
+        for (std::size_t top = 0; top < row.rosterGroupCount; ++top) {
+            published = row.rosterGroups[top] == candidate.group ? "top" : published;
+        }
+        for (std::size_t bubble = 0; bubble < row.bubbleGroupCount; ++bubble) {
+            if (row.bubbleGroups[bubble] == candidate.group) {
+                published = "bubble";
+                mask = row.bubbleGroupMasks[bubble];
+            }
+        }
+        std::uint64_t seen = 0;
+        for (std::size_t key = 0; key < walk.intersection.keyCount; ++key) {
+            seen = walk.intersection.keys[key] == candidate.key ? walk.intersection.masks[key] : seen;
+        }
+        core::log::writef(core::log::Channel::state,
+                          core::log::Level::warn,
+                          "DEBUG_SAULO tower_carrier_publish key=0x%08X group=%u seen_mask=0x%llX "
+                          "bubble_mask=0x%llX published=%s overflow=%u unresolved_set=%u",
+                          candidate.key,
+                          static_cast<unsigned>(candidate.group),
+                          static_cast<unsigned long long>(seen),
+                          static_cast<unsigned long long>(mask),
+                          published,
+                          walk.intersection.overflowed ? 1U : 0U,
+                          walk.intersection.unresolvedSet ? 1U : 0U);
+    }
 }
 
 } // namespace sunrise::client::content::scenarios

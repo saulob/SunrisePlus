@@ -203,6 +203,33 @@ void report_roster_push(Session& session,
     // different hashes can be told apart by the part that moved.
     for (std::size_t index = 0; index < roster.groupCount; ++index) {
         const message::Group& group = roster.groups[index];
+        // DEBUG_SAULO: record the confirmed encounter only after msg-5 encoding succeeded.
+        const bool yuna = group.objectTag == 0x80B4A54AU && group.key == 0x2EFB59ADU;
+        const bool xur = group.objectTag == 0x80B4AD29U && group.key == 0x728E75D1U;
+        const bool saladin = group.objectTag == 0x80B4A5CDU && group.key == 0x27060E6CU;
+        if (yuna || xur || saladin) {
+            std::uint64_t bubbleMask = 0;
+            for (const message::BubbleSubBlock& block : roster.bubbleSubBlocks) {
+                for (const std::uint32_t key : block.keys) {
+                    if (key == group.key && block.bubble < 64) {
+                        bubbleMask |= std::uint64_t{1} << block.bubble;
+                    }
+                }
+            }
+            core::log::writef(core::log::Channel::server,
+                              core::log::Level::warn,
+                              "DEBUG_SAULO %s_path stage=roster_published group_position=%zu "
+                              "object=0x%08X carrier=0x%08X bubble_mask=0x%llX "
+                              "top=%u retired=%u body=0x%llX",
+                              yuna ? "yuna" : xur ? "xur" : "saladin",
+                              index,
+                              group.objectTag,
+                              group.key,
+                              static_cast<unsigned long long>(bubbleMask),
+                              index < roster.topLevelGroupCount ? 1U : 0U,
+                              group.retired ? 1U : 0U,
+                              static_cast<unsigned long long>(bodyHash));
+        }
         const int groupWritten =
             std::snprintf(line.data(),
                           line.size(),

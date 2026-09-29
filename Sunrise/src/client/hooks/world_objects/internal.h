@@ -80,6 +80,27 @@ extern std::atomic_uint32_t g_activeCalls;
 extern std::atomic_bool g_accepting;
 /** Main module base, so a caller address is reported as an RVA that matches the image. */
 extern std::uintptr_t g_moduleBase;
+/** DEBUG_SAULO: orders observations across the existing object and entity detours. */
+extern std::atomic_uint64_t g_nativeTraceSequence;
+/** DEBUG_SAULO: only actual same-thread nesting inherits a creation correlation. */
+extern thread_local std::uint64_t t_nativeTraceRoot;
+
+/** Names exact tag matches in observational logs; it never selects creation behavior. */
+[[nodiscard]] constexpr const char* known_entity_name(std::uint32_t tag) noexcept {
+    switch (tag) {
+    case 0x80B9ECB7U: return "Amanda";
+    case 0x80BC8F1EU: return "Zavala";
+    case 0x80BC8B8BU: return "Banshee";
+    case 0x80BC8D5FU: return "Rahool";
+    case 0x80BC8F18U: return "Shaxx";
+    case 0x80C93820U: return "Yuna";
+    case 0x80BDEBBFU: return "Xur";
+    case 0x80BC8E4BU: return "Saladin";
+    case 0x80FCDB40U: return "Saint";
+    case 0x80FCC2F1U: return "Drifter";
+    default: return "none";
+    }
+}
 /** Return address of the instantiate call being retained; written and read under g_lock. */
 extern std::uintptr_t g_instantiateCaller;
 extern std::size_t g_liveCount;
@@ -166,6 +187,31 @@ __declspec(noinline) std::uint32_t* __fastcall instantiate(std::uint32_t* output
                                                            const void* entry,
                                                            std::int32_t objectListTag,
                                                            std::int32_t entryIndex) noexcept;
+
+/**
+ * DEBUG_SAULO npc_idle_trace: records a watched NPC's allocation (caller chain and descriptor).
+ * Called by the allocate detour after the native call; reads only.
+ */
+void trace_npc_allocation(const void* entry,
+                          std::int32_t list,
+                          std::int32_t entryIndex,
+                          const std::uint32_t* result,
+                          std::uintptr_t caller) noexcept;
+
+/**
+ * DEBUG_SAULO npc_instantiate_trace: logs a watched NPC entering instantiate.
+ * @return The watched index to pass to trace_npc_instantiate_return, or -1.
+ */
+[[nodiscard]] int trace_npc_instantiate_enter(const void* entry,
+                                              std::int32_t list,
+                                              std::int32_t entryIndex,
+                                              std::uintptr_t caller) noexcept;
+
+/** Logs the handle and datum rotation instantiate produced for a watched NPC. */
+void trace_npc_instantiate_return(int watched,
+                                  const void* entry,
+                                  const std::uint32_t* result,
+                                  std::uintptr_t caller) noexcept;
 
 /** Calls native allocation first, then reports it when the instantiate hook did not ask. */
 __declspec(noinline) std::uint32_t* __fastcall allocate(std::uint32_t* output,
